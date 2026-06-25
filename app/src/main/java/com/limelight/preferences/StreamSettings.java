@@ -50,6 +50,7 @@ import com.limelight.GameMenu;
 import com.limelight.LimeLog;
 import com.limelight.PcView;
 import com.limelight.R;
+import com.limelight.binding.input.virtual_controller.VirtualControllerConfigurationLoader;
 import com.limelight.binding.input.virtual_controller.keyboard.KeyBoardControllerConfigurationLoader;
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.utils.Dialog;
@@ -439,7 +440,7 @@ public class StreamSettings extends AppCompatActivity {
                     }
                 }
             }
-            
+
             // Check custom refresh rate
             String customRefreshRateStr = prevPrefConfig.customRefreshRate;
             if (customRefreshRateStr != null && !customRefreshRateStr.isEmpty()) {
@@ -846,6 +847,38 @@ public class StreamSettings extends AppCompatActivity {
                 });
             }
 
+            // ===== 导入虚拟手柄布局 =====
+            _pref = findPreference("import_virtual_controller_file");
+            if (_pref != null) {
+                _pref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("application/json");
+                        startActivityForResult(intent, READ_REQUEST_VC_CODE);
+                        return false;
+                    }
+                });
+            }
+
+            // ===== 导出虚拟手柄布局 =====
+            _pref = findPreference("export_virtual_controller_file");
+            if (_pref != null) {
+                _pref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        // 弹系统"创建文件"对话框,让用户选位置直接保存到手机本地
+                        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("application/json");
+                        intent.putExtra(Intent.EXTRA_TITLE, "virtual_controller_OSC.json");
+                        startActivityForResult(intent, WRITE_REQUEST_VC_CODE);
+                        return false;
+                    }
+                });
+            }
+
             _pref = findPreference("pref_debug_info");
             if (_pref != null) {
                 _pref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
@@ -904,7 +937,7 @@ public class StreamSettings extends AppCompatActivity {
                     try {
                         int width = Integer.parseInt(resolutionSegments[0]);
                         int height = Integer.parseInt(resolutionSegments[1]);
-                        
+
                         if (width <= 0 || height <= 0) {
                             Toast.makeText(getActivity(), getString(R.string.pref_error_occurred), Toast.LENGTH_SHORT).show();
                             return false;
@@ -934,14 +967,14 @@ public class StreamSettings extends AppCompatActivity {
                         Toast.makeText(getActivity(), getString(R.string.pref_enter_value_0_9999), Toast.LENGTH_SHORT).show();
                         return false;
                     }
-                    
+
                     try {
                         float refreshRate = Float.parseFloat(value);
                         if (refreshRate <= 0) {
                             Toast.makeText(getActivity(), getString(R.string.pref_enter_value_0_9999), Toast.LENGTH_SHORT).show();
                             return false;
                         }
-                        
+
                         // Format to max 3 decimal places
                         String formattedValue = String.format("%.3f", refreshRate);
                         // Remove trailing zeros
@@ -994,6 +1027,8 @@ public class StreamSettings extends AppCompatActivity {
 
         int READ_REQUEST_CODE = 1001;
         int READ_REQUEST_SPECIAL_CODE = 1002;
+        int READ_REQUEST_VC_CODE = 1003;
+        int WRITE_REQUEST_VC_CODE = 1004;
 
         @Override
         public void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -1041,6 +1076,61 @@ public class StreamSettings extends AppCompatActivity {
                     e.printStackTrace();
                     Toast.makeText(getActivity(), getString(R.string.pref_error_occurred) + e.getMessage(), Toast.LENGTH_SHORT).show();
                 }
+                return;
+            }
+
+            // ===== 导入虚拟手柄布局 =====
+            if (requestCode == READ_REQUEST_VC_CODE && resultCode == Activity.RESULT_OK && data.getData() != null) {
+                try {
+                    Uri uri = data.getData();
+                    String json = FileUriUtils.openUriForRead(getActivity(), uri);
+                    if (TextUtils.isEmpty(json)) {
+                        Toast.makeText(getActivity(), getString(R.string.pref_empty_file), Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    // 写回虚拟手柄的 SharedPreferences("OSC")
+                    SharedPreferences.Editor prefEditor = requireActivity()
+                            .getSharedPreferences(VirtualControllerConfigurationLoader.OSC_PREFERENCE, Activity.MODE_PRIVATE)
+                            .edit();
+                    JSONObject object = new JSONObject(json);
+                    Iterator it = object.keys();
+                    prefEditor.clear();
+                    while (it.hasNext()) {
+                        String key = (String) it.next();
+                        String value = object.getString(key);
+                        prefEditor.putString(key, value);
+                    }
+                    prefEditor.apply();
+                    Toast.makeText(getActivity(), getString(R.string.pref_import_success), Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Toast.makeText(getActivity(), getString(R.string.pref_error_occurred) + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
+            }
+
+            // ===== 导出虚拟手柄布局:写入用户选择的位置 =====
+            if (requestCode == WRITE_REQUEST_VC_CODE && resultCode == Activity.RESULT_OK && data.getData() != null) {
+                try {
+                    Uri uri = data.getData();
+                    // 读取虚拟手柄布局("OSC")全部内容,转成JSON
+                    SharedPreferences pref = requireActivity()
+                            .getSharedPreferences(VirtualControllerConfigurationLoader.OSC_PREFERENCE, Activity.MODE_PRIVATE);
+                    Map<String, ?> map = pref.getAll();
+                    String jsonStr = new Gson().toJson(map);
+                    // 写入用户选择的文件
+                    java.io.OutputStream os = requireActivity().getContentResolver().openOutputStream(uri);
+                    if (os != null) {
+                        os.write(jsonStr.getBytes(StandardCharsets.UTF_8));
+                        os.flush();
+                        os.close();
+                        Toast.makeText(getActivity(), getString(R.string.pref_set_success), Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(getActivity(), getString(R.string.pref_error_occurred), Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Toast.makeText(getActivity(), getString(R.string.pref_error_occurred) + e.getMessage(), Toast.LENGTH_SHORT).show();
+                }
             }
         }
 
@@ -1069,6 +1159,19 @@ public class StreamSettings extends AppCompatActivity {
             return file1;
         }
 
+        // 把虚拟手柄布局("OSC")的全部内容写成 JSON 文件
+        private File getVirtualControllerJson(Context context, File dir) {
+            String name = VirtualControllerConfigurationLoader.OSC_PREFERENCE;
+            SharedPreferences pref = context.getSharedPreferences(name, Activity.MODE_PRIVATE);
+            Map<String, ?> map = pref.getAll();
+            File outFile = new File(dir, "virtual_controller_" + name + ".json");
+            String jsonStr = new Gson().toJson(map);
+            if (!FileUriUtils.writerFileString(outFile, jsonStr)) {
+                return null;
+            }
+            return outFile;
+        }
+
         //获取所有设置项配置文件
         private File getAllJsonData(File file){
             SharedPreferences pref = getPrefs();
@@ -1084,4 +1187,3 @@ public class StreamSettings extends AppCompatActivity {
         }
     }
 }
-

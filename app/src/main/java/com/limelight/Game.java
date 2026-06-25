@@ -814,7 +814,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         // Initialize trackpad contexts
         for (int i = 0; i < trackpadContextMap.length; i++) {
-            trackpadContextMap[i] = new TrackpadContext(conn, i, prefConfig.trackpadSwapAxis, prefConfig.trackpadSensitivityX, prefConfig.trackpadSensitivityY);
+            trackpadContextMap[i] = new TrackpadContext(conn, i, prefConfig.trackpadSwapAxis, prefConfig.trackpadSensitivityX, prefConfig.trackpadSensitivityY, this);
         }
 
         if (Objects.equals(appUUID, NvApp.REMOTE_INPUT_UUID)) {
@@ -1139,6 +1139,17 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return;
         }
         prefConfig.onscreenController= virtualController.switchShowHide() != 0;
+    }
+
+    // 🎯 从游戏菜单触发"编辑虚拟按键布局":循环切换配置模式(禁用/移动/缩放/保存退出)。
+    //    替代原来屏幕上的悬浮齿轮,避免盲操作误触。
+    public void editVirtualControllerLayout(){
+        if (virtualController == null) {
+            initVirtualController();
+        }
+        // 确保虚拟手柄可见,否则编辑时看不到按键
+        virtualController.show();
+        virtualController.cycleConfigMode();
     }
 
     private void setPreferredOrientationForActivity() {
@@ -3144,19 +3155,15 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     if (aTouchContextMap.getActionIndex() < pointerCount)
                     {
                         int aActionIndex = shouldDuplicateMovement ? 0 : aTouchContextMap.getActionIndex();
-                        int historicalX = (int)event.getHistoricalX(aActionIndex, i);
-                        int historicalY = (int)event.getHistoricalY(aActionIndex, i);
+                        // 🔥 修改点 1：取消 int 强转，保留 float
+                        float historicalX = event.getHistoricalX(aActionIndex, i);
+                        float historicalY = event.getHistoricalY(aActionIndex, i);
                         if (isTouchScreen) {
                             float[] normalizedCoords = getNormalizedCoordinates(streamContainer, historicalX, historicalY);
-                            historicalX = (int)normalizedCoords[0];
-                            historicalY = (int)normalizedCoords[1];
+                            historicalX = normalizedCoords[0]; // 取消 int 强转
+                            historicalY = normalizedCoords[1]; // 取消 int 强转
                         }
 
-                        // Invert axis again since synthetic events are not inverted
-                        // Invert twice could correct the direction
-                        // Blame Android for this problem
-                        // some devices report inverted axis when trackpad pointer is captured
-                        // but not when they're simulated as swipes on the screen
                         if (invertAxis) {
                             aTouchContextMap.touchMoveEvent(
                                     historicalY,
@@ -3179,15 +3186,15 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 if (aTouchContextMap.getActionIndex() < pointerCount)
                 {
                     int aActionIndex = shouldDuplicateMovement ? 0 : aTouchContextMap.getActionIndex();
-                    int currentX = (int)event.getX(aActionIndex);
-                    int currentY = (int)event.getY(aActionIndex);
+                    // 🔥 修改点 2：取消 int 强转，保留 float
+                    float currentX = event.getX(aActionIndex);
+                    float currentY = event.getY(aActionIndex);
                     if (isTouchScreen) {
                         float[] normalizedCoords = getNormalizedCoordinates(streamContainer, currentX, currentY);
-                        currentX = (int)normalizedCoords[0];
-                        currentY = (int)normalizedCoords[1];
+                        currentX = normalizedCoords[0]; // 取消 int 强转
+                        currentY = normalizedCoords[1]; // 取消 int 强转
                     }
 
-                    // Invert axis again since synthetic events are not inverted
                     if (invertAxis) {
                         aTouchContextMap.touchMoveEvent(
                                 currentY,
@@ -3206,14 +3213,15 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return true;
         }
 
-        int eventX = (int)event.getX(actualActionIndex);
-        int eventY = (int)event.getY(actualActionIndex);
+        // 🔥 修改点 3：取消 int 强转，保留 float
+        float eventX = event.getX(actualActionIndex);
+        float eventY = event.getY(actualActionIndex);
 
         // Handle view scaling
         if (isTouchScreen) {
             float[] normalizedCoords = getNormalizedCoordinates(streamContainer, eventX, eventY);
-            eventX = (int)normalizedCoords[0];
-            eventY = (int)normalizedCoords[1];
+            eventX = normalizedCoords[0]; // 取消 int 强转
+            eventY = normalizedCoords[1]; // 取消 int 强转
         }
 
         switch (eventAction)
@@ -3233,7 +3241,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         // All fingers up
                         long currentEventTime = event.getEventTime();
                         if (currentEventTime - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-                            // This is a 3 finger tap to bring up the keyboard
                             toggleKeyboard();
                             return true;
                         } else if (currentEventTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
@@ -3259,12 +3266,13 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 }
                 if (actionIndex == 0 && pointerCount > 1 && !context.isCancelled()) {
                     // The original secondary touch now becomes primary
-                    int pointer1X = (int)event.getX(1);
-                    int pointer1Y = (int)event.getY(1);
+                    // 🔥 修改点 4：同样改成 float
+                    float pointer1X = event.getX(1);
+                    float pointer1Y = event.getY(1);
                     if (isTouchScreen) {
                         float[] normalizedCoords = getNormalizedCoordinates(streamContainer, pointer1X, pointer1Y);
-                        pointer1X = (int)normalizedCoords[0];
-                        pointer1Y = (int)normalizedCoords[1];
+                        pointer1X = normalizedCoords[0];
+                        pointer1Y = normalizedCoords[1];
                     }
                     context.touchDownEvent(
                             pointer1X,
@@ -3284,7 +3292,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         return true;
     }
-
     private boolean handleMultiTouchGesture(MotionEvent event, int eventAction, int pointerCount, View view) {
 
         if (eventAction == MotionEvent.ACTION_POINTER_DOWN) {
@@ -4183,7 +4190,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             } else if (mode == 3) {
                 touchContextMap[i] = new RelativeTouchContext(conn, i, REFERENCE_HORIZ_RES, REFERENCE_VERT_RES, streamContainer, prefConfig);
             } else {
-                touchContextMap[i] = new TrackpadContext(conn, i);
+                touchContextMap[i] = new TrackpadContext(conn, i,
+                        prefConfig.trackpadSwapAxis,
+                        prefConfig.trackpadSensitivityX,
+                        prefConfig.trackpadSensitivityY,
+                        this);
             }
         }
 

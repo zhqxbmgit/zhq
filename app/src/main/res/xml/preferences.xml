@@ -58,12 +58,12 @@
             android:summary="@string/summary_frame_pacing"
             android:title="@string/title_frame_pacing"
             app:iconSpaceReserved="false" />
-    <CheckBoxPreference
-        android:defaultValue="false"
-        android:key="pref_low_latency_frame_balance"
-        android:title="@string/title_low_latency_frame_balance"
-        android:summary="@string/summary_low_latency_frame_balance"
-        app:iconSpaceReserved="false" />
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:key="pref_low_latency_frame_balance"
+            android:title="@string/title_low_latency_frame_balance"
+            android:summary="@string/summary_low_latency_frame_balance"
+            app:iconSpaceReserved="false" />
 
         <CheckBoxPreference
             android:defaultValue="false"
@@ -373,7 +373,7 @@
             android:summary="@string/summary_touchscreen_mode"
             android:title="@string/title_touchscreen_mode"
             app:iconSpaceReserved="false" />
-        
+
         <CheckBoxPreference
             android:defaultValue="false"
             android:key="checkbox_remember_mouse_mode"
@@ -612,7 +612,7 @@
             android:summary="@string/summary_checkbox_disable_warnings"
             android:title="@string/title_checkbox_disable_warnings"
             app:iconSpaceReserved="false" />
-			
+
         <CheckBoxPreference
             android:defaultValue="false"
             android:key="checkbox_show_overlay_zoom_toggle_button"
@@ -732,6 +732,18 @@
             android:positiveButtonText="@string/yes"
             android:summary="@string/summary_reset_osc"
             android:title="@string/title_reset_osc"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            android:key="import_virtual_controller_file"
+            android:summary="导入虚拟手柄布局配置,会覆盖当前布局。"
+            android:title="导入虚拟手柄布局"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            android:key="export_virtual_controller_file"
+            android:summary="导出当前虚拟手柄布局,可在重装后导入恢复。"
+            android:title="导出虚拟手柄布局"
             app:iconSpaceReserved="false" />
     </PreferenceCategory>
 

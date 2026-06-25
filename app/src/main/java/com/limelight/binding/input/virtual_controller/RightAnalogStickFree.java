@@ -22,20 +22,25 @@ public class RightAnalogStickFree extends AnalogStickFree {
                 inputContext.rightStickX = (short) (x * 0x7FFE);
                 inputContext.rightStickY = (short) (y * 0x7FFE);
 
-                controller.sendControllerInputContext(10, 0x11);
+                // 【静音震动】：传入 -1，拦截移动时的持续嗡嗡震动
+                controller.sendControllerInputContext(-1, 0);
             }
 
             @Override
             public void onClick() {
-            }
-
-            @Override
-            public void onDoubleClick() {
+                // 【修复 R3 按键】：将原本双击的逻辑搬到了单击这里
+                // 手指摸到右摇杆瞬间触发 R3
                 VirtualController.ControllerInputContext inputContext =
                         controller.getControllerInputContext();
                 inputContext.inputMap |= ControllerPacket.RS_CLK_FLAG;
 
-                controller.sendControllerInputContext();
+                // 传入 -1，防止主控中心触发二次震动
+                controller.sendControllerInputContext(-1, 0);
+            }
+
+            @Override
+            public void onDoubleClick() {
+                // 留空即可，底层已经不再发送双击事件了
             }
 
             @Override
@@ -44,7 +49,8 @@ public class RightAnalogStickFree extends AnalogStickFree {
                         controller.getControllerInputContext();
                 inputContext.inputMap &= ~ControllerPacket.RS_CLK_FLAG;
 
-                controller.sendControllerInputContext();
+                // 手指抬起时松开 R3，静音发包
+                controller.sendControllerInputContext(-1, 0);
             }
         });
     }

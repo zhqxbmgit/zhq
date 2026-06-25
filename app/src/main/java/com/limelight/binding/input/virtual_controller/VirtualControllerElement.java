@@ -45,7 +45,7 @@ public abstract class VirtualControllerElement extends View {
 
     private final Paint paint = new Paint();
 
-    protected int normalColor = 0xF0888888;
+    protected int normalColor = 0xFFFFFF00;
     protected int pressedColor = 0xF07272ED;
     private int configMoveColor = 0xF0FF0000;
     private int configResizeColor = 0xF0FF00FF;
@@ -190,11 +190,11 @@ public abstract class VirtualControllerElement extends View {
         CharSequence functions[] = new CharSequence[]{
                 "Move",
                 "Resize",
-            /*election
-            "Set n
-            Disable color sormal color",
-            "Set pressed color",
-            */
+                /*election
+                "Set n
+                Disable color sormal color",
+                "Set pressed color",
+                */
                 "Cancel"
         };
 

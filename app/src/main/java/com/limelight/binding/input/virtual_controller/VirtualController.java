@@ -1,5 +1,10 @@
 /**
  * Created by Karim Mreisi.
+ *
+ * Modified Features:
+ * - Smart Haptic Feedback: Analog sticks can pass -1 to bypass continuous vibration.
+ * - Smart Release Mute: Digitial buttons and triggers now only vibrate on press, not on release,
+ * by tracking the previous input state.
  */
 
 package com.limelight.binding.input.virtual_controller;
@@ -27,7 +32,6 @@ import java.util.List;
 
 public class VirtualController {
     public static class ControllerInputContext {
-//        public short inputMap = 0x0000;
         public int inputMap = 0;
         public byte leftTrigger = 0x00;
         public byte rightTrigger = 0x00;
@@ -62,6 +66,11 @@ public class VirtualController {
     ControllerMode currentMode = ControllerMode.Active;
     ControllerInputContext inputContext = new ControllerInputContext();
 
+    // 【新增】：用于记录上一次的按键状态，智能拦截松开时的震动
+    private int lastInputMap = 0;
+    private byte lastLeftTrigger = 0x00;
+    private byte lastRightTrigger = 0x00;
+
     private Button buttonConfigure = null;
 
     private List<VirtualControllerElement> elements = new ArrayList<>();
@@ -90,35 +99,41 @@ public class VirtualController {
         buttonConfigure.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String message;
-
-                if (currentMode == ControllerMode.Active) {
-                    currentMode = ControllerMode.DisableEnableButtons;
-                    showElements();
-                    message = context.getString(R.string.configuration_mode_disable_enable_buttons);
-                } else if (currentMode == ControllerMode.DisableEnableButtons){
-                    currentMode = ControllerMode.MoveButtons;
-                    showEnabledElements();
-                    message = context.getString(R.string.configuration_mode_move_buttons);
-                } else if (currentMode == ControllerMode.MoveButtons) {
-                    currentMode = ControllerMode.ResizeButtons;
-                    message = context.getString(R.string.configuration_mode_resize_buttons);
-                } else {
-                    currentMode = ControllerMode.Active;
-                    VirtualControllerConfigurationLoader.saveProfile(VirtualController.this, context);
-                    message = context.getString(R.string.configuration_mode_exiting);
-                }
-
-                Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
-
-                buttonConfigure.invalidate();
-
-                for (VirtualControllerElement element : elements) {
-                    element.invalidate();
-                }
+                cycleConfigMode();
             }
         });
 
+    }
+
+    // 🎯 循环切换配置模式(Active→禁用/启用→移动→缩放→保存退出)。
+    //    原本由悬浮齿轮触发,现在抽成public方法,可由游戏菜单调用。
+    public void cycleConfigMode() {
+        String message;
+
+        if (currentMode == ControllerMode.Active) {
+            currentMode = ControllerMode.DisableEnableButtons;
+            showElements();
+            message = context.getString(R.string.configuration_mode_disable_enable_buttons);
+        } else if (currentMode == ControllerMode.DisableEnableButtons){
+            currentMode = ControllerMode.MoveButtons;
+            showEnabledElements();
+            message = context.getString(R.string.configuration_mode_move_buttons);
+        } else if (currentMode == ControllerMode.MoveButtons) {
+            currentMode = ControllerMode.ResizeButtons;
+            message = context.getString(R.string.configuration_mode_resize_buttons);
+        } else {
+            currentMode = ControllerMode.Active;
+            VirtualControllerConfigurationLoader.saveProfile(VirtualController.this, context);
+            message = context.getString(R.string.configuration_mode_exiting);
+        }
+
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+
+        if (buttonConfigure != null) buttonConfigure.invalidate();
+
+        for (VirtualControllerElement element : elements) {
+            element.invalidate();
+        }
     }
 
     Handler getHandler() {
@@ -200,11 +215,14 @@ public class VirtualController {
 
         DisplayMetrics screen = context.getResources().getDisplayMetrics();
 
-        int buttonSize = (int)(screen.heightPixels*0.06f);
-        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(buttonSize, buttonSize);
-        params.leftMargin = 15;
-        params.topMargin = 15;
-        frame_layout.addView(buttonConfigure, params);
+        // 🎯 不再显示悬浮配置齿轮,避免盲操作误触。
+        //    "编辑虚拟按键布局"改由游戏菜单(返回菜单→高级)触发 cycleConfigMode()。
+        //    buttonConfigure 对象仍保留(cycleConfigMode内部会invalidate它),只是不加到屏幕上。
+        // int buttonSize = (int)(screen.heightPixels*0.02f);
+        // FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(buttonSize, buttonSize);
+        // params.leftMargin = (screen.widthPixels - buttonSize) / 2;
+        // params.topMargin = 5;
+        // frame_layout.addView(buttonConfigure, params);
 
         // Start with the default layout
         VirtualControllerConfigurationLoader.createDefaultLayout(this, context);
@@ -246,7 +264,37 @@ public class VirtualController {
         handler.removeCallbacks(delayedRetransmitRunnable);
 
         sendControllerInputContextInternal();
-        if (frame_layout != null && PreferenceConfiguration.readPreferences(context).enableKeyboardVibrate) {
+
+        // ========================================================
+        // 【核心新增逻辑】：智能对比当前状态和上一次状态，判断是“按下”还是“松开”
+        // ========================================================
+        boolean isPress = false;
+
+        // 1. 判断普通按键或方向键：通过位运算，如果新状态有，而老状态没有，说明按下了新键
+        if ((inputContext.inputMap & ~lastInputMap) != 0) {
+            isPress = true;
+        }
+        // 2. 判断左/右扳机键是否被按下 (转为无符号数比较防越界)
+        if ((inputContext.leftTrigger & 0xFF) > (lastLeftTrigger & 0xFF)) {
+            isPress = true;
+        }
+        if ((inputContext.rightTrigger & 0xFF) > (lastRightTrigger & 0xFF)) {
+            isPress = true;
+        }
+
+        // 更新历史状态，供下一次比对使用
+        lastInputMap = inputContext.inputMap;
+        lastLeftTrigger = inputContext.leftTrigger;
+        lastRightTrigger = inputContext.rightTrigger;
+
+        // 【静音绝杀】：如果是“松开”操作，并且使用的是默认发包震动(0)，则强制拦截震动设为(-1)
+        if (!isPress && vibrationDuration == 0) {
+            vibrationDuration = -1;
+        }
+        // ========================================================
+
+        // 兼容摇杆的防狂震：只有当震动时长 >= 0 时才真正调用物理马达
+        if (vibrationDuration >= 0 && frame_layout != null && PreferenceConfiguration.readPreferences(context).enableKeyboardVibrate) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 VibrationEffect effect;
                 if (vibrationDuration == 0) {
@@ -262,6 +310,7 @@ public class VirtualController {
                 vibrator.vibrate(vibrationDuration);
             }
         }
+
         // HACK: GFE sometimes discards gamepad packets when they are received
         // very shortly after another. This can be critical if an axis zeroing packet
         // is lost and causes an analog stick to get stuck. To avoid this, we retransmit

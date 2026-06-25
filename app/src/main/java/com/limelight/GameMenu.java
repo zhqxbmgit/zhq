@@ -247,7 +247,7 @@ public class GameMenu implements Game.GameMenuCallbacks {
         if (game.allowChangeMouseMode) {
             options.add(new MenuOption(getString(R.string.game_menu_select_mouse_mode), true, () -> game.selectMouseMode(dialogScreenContext)));
         }
-        
+
         options.add(new MenuOption(getString(R.string.game_menu_toggle_hud), true, game::toggleHUD));
         options.add(new MenuOption(getString(R.string.game_menu_toggle_floating_button), true, game::toggleFloatingButtonVisibility));
         options.add(new MenuOption(getString(R.string.game_menu_toggle_keyboard_model), true, game::toggleKeyboardController));
@@ -256,6 +256,13 @@ public class GameMenu implements Game.GameMenuCallbacks {
         }
         options.add(new MenuOption(getString(R.string.game_menu_toggle_virtual_keyboard_model), true, game::toggleFullKeyboard));
         options.add(new MenuOption(getString(R.string.game_menu_task_manager), true, () -> sendKeys(new short[]{KeyboardTranslator.VK_LCONTROL, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_ESCAPE})));
+
+        // 🎯 编辑虚拟按键布局:替代屏幕上的悬浮齿轮,从菜单触发配置模式
+        //    每点一次循环切换:禁用/启用按键 → 移动按键 → 缩放按键 → 保存并退出
+        options.add(new MenuOption("编辑虚拟按键布局", true, () -> {
+            hideMenu();
+            game.editVirtualControllerLayout();
+        }));
 
         // **FIXED:** This is a UI navigation action, so it should not use withGameFocus.
         options.add(new MenuOption(getString(R.string.game_menu_send_keys), () -> {

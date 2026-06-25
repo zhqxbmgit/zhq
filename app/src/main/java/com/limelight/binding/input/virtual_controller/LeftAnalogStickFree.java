@@ -22,20 +22,25 @@ public class LeftAnalogStickFree extends AnalogStickFree {
                 inputContext.leftStickX = (short) (x * 0x7FFE);
                 inputContext.leftStickY = (short) (y * 0x7FFE);
 
-                controller.sendControllerInputContext(10, 0x11);
+                // 【静音震动】：传入 -1，拦截移动时的持续嗡嗡震动
+                controller.sendControllerInputContext(-1, 0);
             }
 
             @Override
             public void onClick() {
-            }
-
-            @Override
-            public void onDoubleClick() {
+                // 【修复 L3 按键】：将原本双击的逻辑搬到了单击这里
+                // 现在只要手指摸到摇杆，就会瞬间触发 L3，配合单次震动，手感极佳
                 VirtualController.ControllerInputContext inputContext =
                         controller.getControllerInputContext();
                 inputContext.inputMap |= ControllerPacket.LS_CLK_FLAG;
 
-                controller.sendControllerInputContext();
+                // 同样传入 -1，防止主控中心触发二次震动
+                controller.sendControllerInputContext(-1, 0);
+            }
+
+            @Override
+            public void onDoubleClick() {
+                // 留空即可，底层已经不再发送双击事件了
             }
 
             @Override
@@ -44,7 +49,8 @@ public class LeftAnalogStickFree extends AnalogStickFree {
                         controller.getControllerInputContext();
                 inputContext.inputMap &= ~ControllerPacket.LS_CLK_FLAG;
 
-                controller.sendControllerInputContext();
+                // 手指抬起时松开 L3，静音发包
+                controller.sendControllerInputContext(-1, 0);
             }
         });
     }

@@ -1,5 +1,8 @@
 /**
  * Created by Karim Mreisi.
+ * * Modified Features:
+ * - Solid Button Style: Changed default STROKE to FILL for official style buttons.
+ * - Text Visibility: Forced text color to WHITE so it doesn't blend with the solid background.
  */
 
 package com.limelight.binding.input.virtual_controller;
@@ -147,53 +150,67 @@ public class DigitalButton extends VirtualControllerElement {
         canvas.drawColor(Color.TRANSPARENT);
 
         paint.setTextSize(getPercent(getWidth(), 25));
-
         paint.setTextAlign(Paint.Align.CENTER);
-
         paint.setStrokeWidth(getDefaultStrokeWidth());
 
-        paint.setColor(isPressed() ? pressedColor:getDefaultColor());
+        int currentColor = isPressed() ? pressedColor : getDefaultColor();
 
         rect.left = rect.top = paint.getStrokeWidth();
         rect.right = getWidth() - rect.left;
         rect.bottom = getHeight() - rect.top;
 
-        //皮肤选择 官方皮肤
+        // 皮肤选择 官方皮肤
         if(PreferenceConfiguration.readPreferences(getContext()).enableOnScreenStyleOfficial){
-            paint.setStyle(Paint.Style.STROKE);
-            //方形
+            paint.setColor(currentColor);
+            // 【核心修改1】：将空心 STROKE 改为实心 FILL
+            paint.setStyle(Paint.Style.FILL);
+
+            //方形或圆形
             if(PreferenceConfiguration.readPreferences(getContext()).enableKeyboardSquare){
-                canvas.drawRect(rect,paint);
+                canvas.drawRect(rect, paint);
             }else{
                 canvas.drawOval(rect, paint);
             }
+
+            // 【核心修改2】：绘制文字时，强制改为白色，防止被实心背景吞没
             paint.setStyle(Paint.Style.FILL_AND_STROKE);
             paint.setStrokeWidth(getDefaultStrokeWidth()/2);
+            paint.setColor(Color.WHITE);
             canvas.drawText(text, getPercent(getWidth(), 50), getPercent(getHeight(), 63), paint);
             return;
         }
+
         int oscOpacity=PreferenceConfiguration.readPreferences(getContext()).oscOpacity;
-        //虚拟手柄皮肤
+
+        // 虚拟手柄皮肤（带贴图的情况）
         if (icon != -1) {
-            Drawable d = getResources().getDrawable(isPressed()?iconPress:icon);
+            Drawable d = getResources().getDrawable(isPressed() ? iconPress : icon);
             d.setBounds(5, 5, getWidth() - 5, getHeight() - 5);
-            d.setAlpha((int) (oscOpacity*2.55));
+            d.setAlpha((int) (oscOpacity * 2.55));
             d.draw(canvas);
-        }else{
-            paint.setStyle(Paint.Style.STROKE);
+        } else {
+            // 没有贴图时的后备渲染
+            paint.setColor(currentColor);
+            paint.setStyle(Paint.Style.FILL);
+            canvas.drawRect(rect, paint);
+
+            paint.setColor(Color.WHITE);
+            paint.setStyle(Paint.Style.FILL_AND_STROKE);
             paint.setStrokeWidth(getDefaultStrokeWidth()/2);
             canvas.drawText(text, getPercent(getWidth(), 50), getPercent(getHeight(), 63), paint);
         }
 
+        // 编辑模式逻辑
         boolean bIsMoving = virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons;
         boolean bIsResizing = virtualController.getControllerMode() == VirtualController.ControllerMode.ResizeButtons;
         boolean bIsEnable = virtualController.getControllerMode() == VirtualController.ControllerMode.DisableEnableButtons;
 
-        if (bIsMoving || bIsResizing || bIsEnable ||icon==-1) {
+        // 编辑模式时画一个描边框，方便拖拽
+        if (bIsMoving || bIsResizing || bIsEnable || icon == -1) {
+            paint.setColor(currentColor);
             paint.setStyle(Paint.Style.STROKE);
-            canvas.drawRect(rect,paint);
+            canvas.drawRect(rect, paint);
         }
-
     }
 
     private void onClickCallback() {
