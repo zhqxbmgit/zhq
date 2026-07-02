@@ -16,14 +16,14 @@ import com.limelight.preferences.PreferenceConfiguration;
  * SlideButtonLR:横向"按住+滑动"按键(左右版)。盲操作友好。
  *
  * 行为:
- *  - 点一下(不滑动)       -> 抬起时发一次原键(如 X)的完整点击。
+ *  - 快速点一下(不滑动)    -> 抬起时发一次原键(如 X)的完整点击。单击延迟不变。
+ *  - 按住不放(超过长按窗口)  -> 补发原键按下并保持,松手才松,实现长按。
  *  - 按住 + 向左滑(超阈值) -> 按住"左滑键",抬起才松;原键全程不发。
  *  - 按住 + 向右滑(超阈值) -> 按住"右滑键",抬起才松;原键全程不发。
  *  - 按住 + 向上滑(超阈值) -> 按住"上滑键",抬起才松;原键全程不发。
  *
- * 设计:按下时"不"立即发原键,等抬起时若全程没滑动,才补发一次原键的完整点击。
- * 这样滑动触发时,原键(X)从头到尾都不会被发出,绝无误触。
- * 代价:原键点击在抬起时才生效(有延迟),且无法按住原键。
+ * 设计:按下时"不"立即发原键。短按=抬手立即补发完整点击;长按=超过 LONG_PRESS_MS
+ * 补发按下并保持;滑动=判定后原键不发(防误触)。代价:长按有约 LONG_PRESS_MS 启动延迟。
  */
 public class SlideButtonLR extends VirtualControllerElement {
 
@@ -40,13 +40,17 @@ public class SlideButtonLR extends VirtualControllerElement {
 
     // 滑动触发阈值(dp)。手指左/右移动超过对应阈值才算"滑动"。
     // 调大=该方向更不易误触发(原键更稳);调小=更灵敏。左右可分别设。
-    private static final float SLIDE_LEFT_THRESHOLD_DP = 12f;   // 向左滑阈值
-    private static final float SLIDE_RIGHT_THRESHOLD_DP = 3f;  // 向右滑阈值
-    private static final float SLIDE_UP_THRESHOLD_DP = 1f;     // 向上滑阈值
+    private static final float SLIDE_LEFT_THRESHOLD_DP = 14f;   // 向左滑阈值
+    private static final float SLIDE_RIGHT_THRESHOLD_DP = 8f;   // 向右滑阈值
+    private static final float SLIDE_UP_THRESHOLD_DP = 4f;      // 向上滑阈值
     // 🎯 补发点击时,按下与松开之间的保持时长(毫秒)。
     //    游戏按帧轮询,太短会漏点(点几次才中一次)。20ms覆盖60Hz/120Hz轮询都够,
     //    且延迟感几乎没有、连点够快。某游戏仍漏点再调大(25、30)。
     private static final int TAP_HOLD_MS = 20;
+    // 🎯 长按判定窗口(毫秒)。按住超过这个时间且没滑动,就进入"按住模式":
+    //    补发原键按下并保持,直到松手才松开,实现长按。
+    //    短于此时间就抬手=单击(单击延迟不变,抬手即发)。调小=长按更快触发但更易误判;调大=要按更久才算长按。
+    private static final int LONG_PRESS_MS = 100;
     // 清脆震动时长(ms,仅Android9及以下用;Android10+用系统清脆效果)。0=关闭。
     private static final int SLIDE_VIBRATE_MS = 20;
 
@@ -65,6 +69,8 @@ public class SlideButtonLR extends VirtualControllerElement {
     private boolean basePressed = false;      // 原键(X)是否正按着
     private boolean slideTriggered = false;   // 本次是否已判定为滑动
     private int slideDir = 0;                  // 当前滑动方向 -1=左 +1=右 2=上 0=无
+    private boolean longPressActive = false;   // 是否已进入长按(原键已补发按下并保持中)
+    private Runnable longPressRunnable = null;  // 长按延时任务
 
     private final Paint paint = new Paint();
     private final RectF rect = new RectF();
@@ -142,10 +148,22 @@ public class SlideButtonLR extends VirtualControllerElement {
                 downY = event.getY();
                 slideTriggered = false;
                 slideDir = 0;
+                longPressActive = false;
                 // 按下先不发原键(X),仅视觉按下+震动;抬起时若全程没滑动才补发完整点击。
                 // 这样滑动触发时,原键(X)从头到尾不会被发出,绝无误触。
                 basePressed = true;
                 slideVibrate();   // 按下:清脆震动(EFFECT_CLICK)
+                // 启动长按判定:超过 LONG_PRESS_MS 仍未滑动、未抬手,则补发按下并保持(长按)
+                longPressRunnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        if (basePressed && !slideTriggered && !longPressActive) {
+                            longPressActive = true;
+                            if (listener != null) listener.onBaseClick();   // 补发按下并保持(不补松开)
+                        }
+                    }
+                };
+                postDelayed(longPressRunnable, LONG_PRESS_MS);
                 invalidate();
                 return true;
             }
@@ -154,36 +172,39 @@ public class SlideButtonLR extends VirtualControllerElement {
                 if (!slideTriggered) {
                     float dx = event.getX() - downX;
                     float dy = event.getY() - downY;
-                    // 上滑(dy<0)只在向上时判定;左右用各自阈值。
-                    boolean upOver = (dy < 0) && (Math.abs(dy) >= slideUpThresholdPx);
+                    // 左右用各自阈值
                     float lrThreshold = (dx < 0) ? slideLeftThresholdPx : slideRightThresholdPx;
                     boolean lrOver = Math.abs(dx) >= lrThreshold;
+                    // 上滑(dy<0)只在向上时判定
+                    boolean upOver = (dy < 0) && (Math.abs(dy) >= slideUpThresholdPx);
 
-                    // 同时超过时,取位移更大的方向(以各自阈值归一化比较,谁先到位算谁)
-                    boolean pickUp = false;
-                    if (upOver && lrOver) {
-                        float upRatio = Math.abs(dy) / slideUpThresholdPx;
-                        float lrRatio = Math.abs(dx) / lrThreshold;
-                        pickUp = upRatio >= lrRatio;
-                    } else if (upOver) {
-                        pickUp = true;
-                    }
-
-                    if (upOver || lrOver) {
+                    // 🎯 左右优先策略:只要左右到达阈值,就判左右(不和上滑比例比较)。
+                    //    只有左右都没到、纯粹向上时,才判上滑。
+                    //    这样向右滑时即使带一点向上分量,也不会误判成上滑。
+                    if (lrOver) {
                         slideTriggered = true;
-                        // 原键(X)从未发出,只需取消视觉按下态
-                        basePressed = false;
-                        slideVibrate();   // 滑动触发:清脆震动
-                        if (pickUp) {
-                            slideDir = 2;   // 上
-                            if (listener != null) listener.onSlideUp();
-                        } else {
-                            slideDir = (dx < 0) ? -1 : 1;   // 左/右
-                            if (listener != null) {
-                                if (slideDir < 0) listener.onSlideLeft();
-                                else listener.onSlideRight();
-                            }
+                        if (longPressRunnable != null) {
+                            removeCallbacks(longPressRunnable);
+                            longPressRunnable = null;
                         }
+                        basePressed = false;   // 原键(X)从未发出,只取消视觉按下态
+                        slideDir = (dx < 0) ? -1 : 1;   // 左/右
+                        slideVibrate();   // 滑动触发:清脆震动
+                        if (listener != null) {
+                            if (slideDir < 0) listener.onSlideLeft();
+                            else listener.onSlideRight();
+                        }
+                        invalidate();
+                    } else if (upOver) {
+                        slideTriggered = true;
+                        if (longPressRunnable != null) {
+                            removeCallbacks(longPressRunnable);
+                            longPressRunnable = null;
+                        }
+                        basePressed = false;
+                        slideDir = 2;   // 上
+                        slideVibrate();
+                        if (listener != null) listener.onSlideUp();
                         invalidate();
                     }
                 }
@@ -192,6 +213,11 @@ public class SlideButtonLR extends VirtualControllerElement {
 
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
+                // 抬手:取消还没触发的长按延时任务
+                if (longPressRunnable != null) {
+                    removeCallbacks(longPressRunnable);
+                    longPressRunnable = null;
+                }
                 if (slideTriggered) {
                     // 滑动模式:松开滑动键
                     if (listener != null) {
@@ -201,8 +227,12 @@ public class SlideButtonLR extends VirtualControllerElement {
                     }
                     slideTriggered = false;
                     slideDir = 0;
+                } else if (longPressActive) {
+                    // 长按模式:按下已在 LONG_PRESS_MS 时补发,这里只松开
+                    if (listener != null) listener.onBaseRelease();
+                    longPressActive = false;
                 } else {
-                    // 没滑动:补发一次原键(X)完整点击。
+                    // 短按(没滑动、没到长按时间):补发一次原键(X)完整点击。
                     // 关键:按下与松开之间延迟 TAP_HOLD_MS,保证游戏按帧轮询能采到"按下"状态,
                     //       否则瞬间Down+Up常被游戏漏掉(表现为"点几次才中一次")。
                     if (action == MotionEvent.ACTION_UP && listener != null) {
