@@ -212,8 +212,6 @@ public class TrackpadContext implements TouchContext {
                 double decel = GLIDE_DECELERATION * DT;
                 if (curSpeed <= decel + VEL_THRESHOLD) {
                     currentVelX = 0; currentVelY = 0;
-                    carryOverX = currentPosX - lastSentX;
-                    carryOverY = currentPosY - lastSentY;
                     if (!isTouching) shouldStop = true;
                 } else {
                     double scale = (curSpeed - decel) / curSpeed;
@@ -229,7 +227,6 @@ public class TrackpadContext implements TouchContext {
                 if (distLen < POS_THRESHOLD && currentSpeed < VEL_THRESHOLD) {
                     currentPosX = targetAccumX; currentPosY = targetAccumY;
                     currentVelX = 0; currentVelY = 0;
-                    carryOverX = currentPosX - lastSentX; carryOverY = currentPosY - lastSentY;
                     if (!isTouching) shouldStop = true;
                 } else {
                     // 🛡️ 核心重构：二阶强阻尼弹簧模型 (彻底消灭弹簧、反弹、挂钩)
@@ -275,6 +272,11 @@ public class TrackpadContext implements TouchContext {
             double moveX = currentPosX - lastSentX, moveY = currentPosY - lastSentY;
             sendDeltaX = (short) Math.round(moveX); sendDeltaY = (short) Math.round(moveY);
             if (sendDeltaX != 0 || sendDeltaY != 0) { lastSentX += sendDeltaX; lastSentY += sendDeltaY; }
+
+            if (shouldStop) {
+                carryOverX = currentPosX - lastSentX;
+                carryOverY = currentPosY - lastSentY;
+            }
         }
 
         if (sendDeltaX != 0 || sendDeltaY != 0) conn.sendMouseMove(sendDeltaX, sendDeltaY);
