@@ -729,4 +729,7 @@
 
     <string name="title_checkbox_full_screen">Enable Full Screen</string>
     <string name="summary_checkbox_full_screen">Hide system bars with immersive mode</string>
+
+    <string name="title_auto_start_desktop_stream_on_launch">Auto-start desktop stream on launch</string>
+    <string name="summary_auto_start_desktop_stream_on_launch">Automatically connect to an available paired computer and start the desktop stream when the app opens</string>
 </resources>

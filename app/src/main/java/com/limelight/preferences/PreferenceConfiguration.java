@@ -137,6 +137,7 @@ public class PreferenceConfiguration {
     private static final String CHECKBOX_TRACKPAD_SWAP_AXIS = "checkbox_trackpad_swap_axis";
 
     private static final String CHECKBOX_ENABLE_COMMIT_TEXT = "checkbox_enable_commit_text";
+    private static final String CHECKBOX_AUTO_START_DESKTOP_STREAM_ON_LAUNCH = "checkbox_auto_start_desktop_stream_on_launch";
 
     static final String DEFAULT_RESOLUTION = "1280x720";
     static final String DEFAULT_FPS = "60";
@@ -148,6 +149,7 @@ public class PreferenceConfiguration {
     private static final int DEFAULT_RESOLUTION_SCALE_FACTOR = 100;
     private static final boolean DEFAULT_RESUME_WITHOUT_CONFIRM = false;
     private static final boolean DEFAULT_SOPS = true;
+    private static final boolean DEFAULT_AUTO_START_DESKTOP_STREAM_ON_LAUNCH = true;
     private static final boolean DEFAULT_DISABLE_TOASTS = false;
     private static final boolean DEFAULT_HOST_AUDIO = false;
     private static final int DEFAULT_DEADZONE = 5;
@@ -264,6 +266,7 @@ public class PreferenceConfiguration {
     public boolean showGuideButton;
     public boolean enableHdr;
     public boolean enablePip;
+    public boolean autoStartDesktopStreamOnLaunch;
 
     public float parallax_depth;
 
@@ -1021,6 +1024,7 @@ private static int getFramePacingValue(Context context) {
         config.forceMotionSensorsFallbackToDevice = prefs.getBoolean(FORCE_MOTION_SENSORS_FALLBACK_PREF_STRING, DEFAULT_FORCE_MOTION_SENSORS_FALLBACK);
         config.enableRumble = prefs.getBoolean(ENABLE_RUMBLE_PREF_STRING, DEFAULT_ENABLE_RUMBLE);
         config.preventPacketLoss = prefs.getBoolean(PREVENT_PACKET_LOSS_PREF_STRING, DEFAULT_PREVENT_PACKET_LOSS);
+        config.autoStartDesktopStreamOnLaunch = prefs.getBoolean(CHECKBOX_AUTO_START_DESKTOP_STREAM_ON_LAUNCH, DEFAULT_AUTO_START_DESKTOP_STREAM_ON_LAUNCH);
 
         // Read custom values
         config.customResolution = prefs.getString(CUSTOM_RESOLUTION_PREF_STRING, null);

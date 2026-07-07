@@ -898,6 +898,11 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
             return;
         }
 
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
+        if (!prefConfig.autoStartDesktopStreamOnLaunch) {
+            return;
+        }
+
         for (int i = 0; i < pcGridAdapter.getCount(); i++) {
             ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(i);
             if (computer != null && computer.details != null &&
