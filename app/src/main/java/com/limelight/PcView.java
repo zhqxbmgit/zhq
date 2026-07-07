@@ -76,6 +76,8 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     private ShortcutHelper shortcutHelper;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
+    private boolean autoConnectAttemptedThisLaunch = false;
+    private boolean autoConnectTriggeredThisLaunch = false;
     private ComputerDetails.AddressTuple pendingPairingAddress;
     private String pendingPairingPin, pendingPairingPassphrase;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
@@ -712,6 +714,10 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     }
 
     private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames) {
+        doAppList(computer, newlyPaired, showHiddenGames, false);
+    }
+
+    private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames, boolean autoStartDesktopStream) {
         if (computer.state == ComputerDetails.State.OFFLINE) {
             Toast.makeText(PcView.this, getResources().getString(R.string.error_pc_offline), Toast.LENGTH_SHORT).show();
             return;
@@ -726,6 +732,9 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
         i.putExtra(AppView.UUID_EXTRA, computer.uuid);
         i.putExtra(AppView.NEW_PAIR_EXTRA, newlyPaired);
         i.putExtra(AppView.SHOW_HIDDEN_APPS_EXTRA, showHiddenGames);
+        if (autoStartDesktopStream) {
+            i.putExtra(AppView.AUTO_START_DESKTOP_STREAM_EXTRA, true);
+        }
         startActivity(i);
     }
 
@@ -880,6 +889,28 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
 
         // Notify the view that the data has changed
         pcGridAdapter.notifyDataSetChanged();
+
+        tryAutoConnectDesktopStreamOnce();
+    }
+
+    private void tryAutoConnectDesktopStreamOnce() {
+        if (autoConnectAttemptedThisLaunch) {
+            return;
+        }
+
+        for (int i = 0; i < pcGridAdapter.getCount(); i++) {
+            ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(i);
+            if (computer != null && computer.details != null &&
+                computer.details.pairState == PairingManager.PairState.PAIRED &&
+                computer.details.state == ComputerDetails.State.ONLINE) {
+                
+                autoConnectAttemptedThisLaunch = true;
+                autoConnectTriggeredThisLaunch = true;
+                
+                doAppList(computer.details, false, false, true);
+                break;
+            }
+        }
     }
 
     @Override

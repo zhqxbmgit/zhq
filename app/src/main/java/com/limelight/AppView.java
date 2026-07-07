@@ -70,6 +70,9 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private boolean showHiddenApps;
     private HashSet<Integer> hiddenAppIds = new HashSet<>();
 
+    private boolean autoStartDesktopRequested = false;
+    private boolean autoStartDesktopAttempted = false;
+
     private PreferenceConfiguration prefConfig;
 
     private final static int START_OR_RESUME_ID = 1;
@@ -88,6 +91,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     public final static String UUID_EXTRA = "UUID";
     public final static String NEW_PAIR_EXTRA = "NewPair";
     public final static String SHOW_HIDDEN_APPS_EXTRA = "ShowHiddenApps";
+    public final static String AUTO_START_DESKTOP_STREAM_EXTRA = "auto_start_desktop_stream";
 
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
@@ -318,6 +322,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
             .setOnClickListener(v -> startActivity(new Intent(this, ProfilesActivity.class)));
 
         showHiddenApps = getIntent().getBooleanExtra(SHOW_HIDDEN_APPS_EXTRA, false);
+        autoStartDesktopRequested = getIntent().getBooleanExtra(AUTO_START_DESKTOP_STREAM_EXTRA, false);
         uuidString = getIntent().getStringExtra(UUID_EXTRA);
 
         SharedPreferences hiddenAppsPrefs = getSharedPreferences(HIDDEN_APPS_PREF_FILENAME, MODE_PRIVATE);
@@ -730,8 +735,51 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 if (updated) {
                     appGridAdapter.notifyDataSetChanged();
                 }
+
+                tryAutoStartDesktopStreamOnce(appList);
             }
         });
+    }
+
+    private void tryAutoStartDesktopStreamOnce(List<NvApp> appList) {
+        if (!autoStartDesktopRequested || autoStartDesktopAttempted) {
+            return;
+        }
+
+        if (appList == null || appList.isEmpty()) {
+            return;
+        }
+
+        autoStartDesktopAttempted = true;
+
+        NvApp desktopApp = null;
+        for (NvApp app : appList) {
+            String name = app.getAppName();
+            if (name == null) continue;
+
+            name = name.trim();
+            if (name.equalsIgnoreCase("Desktop") || name.equals("桌面")) {
+                desktopApp = app;
+                break;
+            }
+        }
+
+        if (desktopApp != null) {
+            // Only auto-start if nothing else is running or we're already running the desktop
+            if (lastRunningAppId == 0 || lastRunningAppId == desktopApp.getAppId()) {
+                final NvApp finalDesktopApp = desktopApp;
+                if (prefConfig.useVirtualDisplay && !(computer.vDisplaySupported && computer.vDisplayDriverReady)) {
+                    UiHelper.displayVdisplayConfirmationDialog(
+                            AppView.this,
+                            computer,
+                            () -> ServerHelper.doStart(AppView.this, finalDesktopApp, computer, managerBinder, true),
+                            null
+                    );
+                } else {
+                    ServerHelper.doStart(AppView.this, desktopApp, computer, managerBinder, prefConfig.useVirtualDisplay);
+                }
+            }
+        }
     }
 
     @Override
