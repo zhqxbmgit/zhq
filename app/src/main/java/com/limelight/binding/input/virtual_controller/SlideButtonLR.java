@@ -40,17 +40,17 @@ public class SlideButtonLR extends VirtualControllerElement {
 
     // 滑动触发阈值(dp)。手指左/右移动超过对应阈值才算"滑动"。
     // 调大=该方向更不易误触发(原键更稳);调小=更灵敏。左右可分别设。
-    private static final float SLIDE_LEFT_THRESHOLD_DP = 14f;   // 向左滑阈值
-    private static final float SLIDE_RIGHT_THRESHOLD_DP = 8f;   // 向右滑阈值
-    private static final float SLIDE_UP_THRESHOLD_DP = 4f;      // 向上滑阈值
+    private static final float SLIDE_LEFT_THRESHOLD_DP = 12f;   // 向左滑阈值
+    private static final float SLIDE_RIGHT_THRESHOLD_DP = 3f;   // 向右滑阈值
+    private static final float SLIDE_UP_THRESHOLD_DP = 2f;      // 向上滑阈值
     // 🎯 补发点击时,按下与松开之间的保持时长(毫秒)。
     //    游戏按帧轮询,太短会漏点(点几次才中一次)。20ms覆盖60Hz/120Hz轮询都够,
     //    且延迟感几乎没有、连点够快。某游戏仍漏点再调大(25、30)。
-    private static final int TAP_HOLD_MS = 20;
+    private static final int TAP_HOLD_MS = 25;
     // 🎯 长按判定窗口(毫秒)。按住超过这个时间且没滑动,就进入"按住模式":
     //    补发原键按下并保持,直到松手才松开,实现长按。
     //    短于此时间就抬手=单击(单击延迟不变,抬手即发)。调小=长按更快触发但更易误判;调大=要按更久才算长按。
-    private static final int LONG_PRESS_MS = 100;
+    private static final int LONG_PRESS_MS = 400;
     // 清脆震动时长(ms,仅Android9及以下用;Android10+用系统清脆效果)。0=关闭。
     private static final int SLIDE_VIBRATE_MS = 20;
 
