@@ -72,6 +72,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
     private boolean autoStartDesktopRequested = false;
     private boolean autoStartDesktopAttempted = false;
+    private boolean autoResumeDesktopAttempted = false;
 
     private PreferenceConfiguration prefConfig;
 
@@ -661,8 +662,46 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 if (updated) {
                     appGridAdapter.notifyDataSetChanged();
                 }
+
+                tryAutoResumeRunningDesktopOnce();
             }
         });
+    }
+
+    private boolean isDesktopApp(NvApp app) {
+        String name = app.getAppName();
+        if (name == null) return false;
+
+        name = name.trim();
+        return name.equalsIgnoreCase("Desktop") || name.equals("桌面");
+    }
+
+    private void tryAutoResumeRunningDesktopOnce() {
+        if (autoResumeDesktopAttempted) {
+            return;
+        }
+
+        if (Game.terminatedByUser) {
+            return;
+        }
+
+        if (lastRunningAppId == 0) {
+            return;
+        }
+
+        NvApp desktopApp = null;
+        for (int i = 0; i < appGridAdapter.getCount(); i++) {
+            AppObject obj = (AppObject) appGridAdapter.getItem(i);
+            if (isDesktopApp(obj.app) && obj.app.getAppId() == lastRunningAppId) {
+                desktopApp = obj.app;
+                break;
+            }
+        }
+
+        if (desktopApp != null) {
+            autoResumeDesktopAttempted = true;
+            ServerHelper.doStart(AppView.this, desktopApp, computer, managerBinder, prefConfig.useVirtualDisplay);
+        }
     }
 
     private void updateUiWithAppList(final List<NvApp> appList) {
@@ -754,11 +793,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
         NvApp desktopApp = null;
         for (NvApp app : appList) {
-            String name = app.getAppName();
-            if (name == null) continue;
-
-            name = name.trim();
-            if (name.equalsIgnoreCase("Desktop") || name.equals("桌面")) {
+            if (isDesktopApp(app)) {
                 desktopApp = app;
                 break;
             }

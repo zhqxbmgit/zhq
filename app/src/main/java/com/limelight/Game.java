@@ -142,6 +142,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         ExternalControllerView.InputCallbacks,
         PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
     public static Game instance;
+    public static boolean terminatedByUser = false;
 
     private int lastButtonState = 0;
 
@@ -342,6 +343,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        terminatedByUser = false;
         instance = this;
         timerHandler = new Handler(Looper.getMainLooper());
 
@@ -4223,6 +4225,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void disconnect() {
+        terminatedByUser = true;
         if (prefConfig.smartClipboardSync) {
             getClipboard(-1);
         }
@@ -4230,6 +4233,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void quit() {
+        terminatedByUser = true;
         Context context;
         if (isOnExternalDisplay() && ExternalDisplayControlActivity.instance != null) {
             context = ExternalDisplayControlActivity.instance;
