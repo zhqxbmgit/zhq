@@ -46,4 +46,3 @@ app/.externalNativeBuild/
 .cxx/
 
 # agent files
-AGENTS.md
