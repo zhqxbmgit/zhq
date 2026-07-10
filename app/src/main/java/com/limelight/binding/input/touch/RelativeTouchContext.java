@@ -28,7 +28,7 @@ public class RelativeTouchContext extends TrackpadContext {
         // so moving X physical inches on the screen translates to the same visual movement
         // across the remote desktop.
 
-        // This is not perfect because the video might have black bars, meaning the view is larger
+        // This is not perfect because the video might have black bars, meaning the video is larger
         // than the actual video being displayed. However, since the mouse movement is confined to
         // the video area anyway, scaling by the view dimensions is close enough.
 
@@ -36,5 +36,15 @@ public class RelativeTouchContext extends TrackpadContext {
         // before handing off the event for standard processing.
         // NOTE: Since the parent TrackpadContext uses float, we pass the raw float values directly.
         return super.touchMoveEvent(eventX * scaleX, eventY * scaleY, eventTime);
+    }
+
+    @Override
+    public boolean touchDownEvent(float eventX, float eventY, long eventTime, boolean isNewFinger) {
+        return super.touchDownEvent(eventX * scaleX, eventY * scaleY, eventTime, isNewFinger);
+    }
+
+    @Override
+    public void touchUpEvent(float eventX, float eventY, long eventTime) {
+        super.touchUpEvent(eventX * scaleX, eventY * scaleY, eventTime);
     }
 }

@@ -73,6 +73,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private boolean autoStartDesktopRequested = false;
     private boolean autoStartDesktopAttempted = false;
     private boolean autoResumeDesktopAttempted = false;
+    private boolean receivedServerInfo = false;
 
     private PreferenceConfiguration prefConfig;
 
@@ -254,6 +255,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     if (details.runningGameId != lastRunningAppId) {
                         // Update the currently running game using the app ID
                         lastRunningAppId = details.runningGameId;
+                        receivedServerInfo = true;
                         updateUiWithServerinfo(details);
                     }
 
@@ -261,6 +263,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 }
 
                 lastRunningAppId = details.runningGameId;
+                receivedServerInfo = true;
                 lastRawApplist = details.rawAppList;
 
                 try {
@@ -781,6 +784,10 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     private void tryAutoStartDesktopStreamOnce(List<NvApp> appList) {
+        if (!receivedServerInfo) {
+            return;
+        }
+
         if (!autoStartDesktopRequested || autoStartDesktopAttempted) {
             return;
         }

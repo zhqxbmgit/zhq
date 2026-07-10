@@ -173,6 +173,11 @@ public class SlideButton extends VirtualControllerElement {
                         }
                         // 原键(B)从未发出,只需取消视觉按下态
                         basePressed = false;
+                        // 🎯 长按接管逻辑：如果已经触发了长按，则先释放原键
+                        if (longPressActive) {
+                            if (listener != null) listener.onBaseRelease();
+                            longPressActive = false;
+                        }
                         // 按住对应方向的滑动键(屏幕Y向上为负)
                         slideDir = (dy < 0) ? -1 : 1;
                         slideVibrate();   // 上下滑触发:短强震

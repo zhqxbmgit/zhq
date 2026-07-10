@@ -4233,7 +4233,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void quit() {
-        terminatedByUser = true;
         Context context;
         if (isOnExternalDisplay() && ExternalDisplayControlActivity.instance != null) {
             context = ExternalDisplayControlActivity.instance;
@@ -4245,6 +4244,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         builder.setMessage(R.string.game_dialog_message_quit_confirm);
 
         builder.setPositiveButton(getString(R.string.yes), (dialog, which) -> {
+            terminatedByUser = true;
             quitOnStop = true;
             dialog.dismiss();
             finish();

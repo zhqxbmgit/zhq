@@ -188,6 +188,11 @@ public class SlideButtonLR extends VirtualControllerElement {
                             longPressRunnable = null;
                         }
                         basePressed = false;   // 原键(X)从未发出,只取消视觉按下态
+                        // 🎯 长按接管逻辑：如果已经触发了长按，则先释放原键
+                        if (longPressActive) {
+                            if (listener != null) listener.onBaseRelease();
+                            longPressActive = false;
+                        }
                         slideDir = (dx < 0) ? -1 : 1;   // 左/右
                         slideVibrate();   // 滑动触发:清脆震动
                         if (listener != null) {
@@ -202,6 +207,11 @@ public class SlideButtonLR extends VirtualControllerElement {
                             longPressRunnable = null;
                         }
                         basePressed = false;
+                        // 🎯 长按接管逻辑：如果已经触发了长按，则先释放原键
+                        if (longPressActive) {
+                            if (listener != null) listener.onBaseRelease();
+                            longPressActive = false;
+                        }
                         slideDir = 2;   // 上
                         slideVibrate();
                         if (listener != null) listener.onSlideUp();

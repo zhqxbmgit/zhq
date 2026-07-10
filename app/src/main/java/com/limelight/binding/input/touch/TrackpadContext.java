@@ -41,7 +41,7 @@ public class TrackpadContext implements TouchContext {
     private static final double DT = TICK_RATE_MS / 1000.0;
 
     // 🎯 时间常数：控制整体跟随快慢 (推荐 0.02 ~ 0.03)
-    private static final double SMOOTHING_TIME_CONSTANT = 0.04;
+    private static final double SMOOTHING_TIME_CONSTANT = 0.035;
     private static final double MAX_VELOCITY = 15000.0;
     private static final double MAX_ACCELERATION = 80000.0;
     private static final double GLIDE_DECELERATION = 120000.0;
