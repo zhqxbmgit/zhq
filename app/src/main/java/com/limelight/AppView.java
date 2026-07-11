@@ -37,6 +37,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Looper;
 import android.view.ContextMenu;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -50,6 +51,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
+import androidx.annotation.MainThread;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -71,9 +73,13 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private HashSet<Integer> hiddenAppIds = new HashSet<>();
 
     private boolean autoStartDesktopRequested = false;
-    private boolean autoStartDesktopAttempted = false;
-    private boolean autoResumeDesktopAttempted = false;
     private boolean receivedServerInfo = false;
+    private boolean requireFreshServerInfo = true;
+    private boolean invalidatedStateForFreshServerInfo = false;
+    private boolean autoDesktopLaunchPending = false;
+    private boolean autoDesktopLaunchDispatched = false;
+    private boolean autoDesktopConfirmationPending = false;
+    private boolean autoDesktopConfirmationCancelled = false;
 
     private PreferenceConfiguration prefConfig;
 
@@ -94,6 +100,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     public final static String NEW_PAIR_EXTRA = "NewPair";
     public final static String SHOW_HIDDEN_APPS_EXTRA = "ShowHiddenApps";
     public final static String AUTO_START_DESKTOP_STREAM_EXTRA = "auto_start_desktop_stream";
+    private final static String AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE =
+            "autoDesktopConfirmationCancelled";
 
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
@@ -197,10 +205,22 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         }
     }
 
+    @MainThread
     private void startComputerUpdates() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            runOnUiThread(this::startComputerUpdates);
+            return;
+        }
+
         // Don't start polling if we're not bound or in the foreground
         if (managerBinder == null || !inForeground) {
             return;
+        }
+
+        if (requireFreshServerInfo && !invalidatedStateForFreshServerInfo) {
+            receivedServerInfo = false;
+            managerBinder.invalidateStateForComputer(uuidString);
+            invalidatedStateForFreshServerInfo = true;
         }
 
         managerBinder.startPolling(new ComputerManagerListener() {
@@ -248,35 +268,17 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     return;
                 }
 
-                // App list is the same or empty
-                if (details.rawAppList == null || details.rawAppList.equals(lastRawApplist)) {
-
-                    // Let's check if the running app ID changed
-                    if (details.runningGameId != lastRunningAppId) {
-                        // Update the currently running game using the app ID
-                        lastRunningAppId = details.runningGameId;
-                        receivedServerInfo = true;
-                        updateUiWithServerinfo(details);
-                    }
-
-                    return;
-                }
-
-                lastRunningAppId = details.runningGameId;
-                receivedServerInfo = true;
-                lastRawApplist = details.rawAppList;
-
+                List<NvApp> parsedAppList = null;
                 try {
-                    updateUiWithAppList(NvHTTP.getAppListByReader(new StringReader(details.rawAppList)));
-                    updateUiWithServerinfo(details);
-
-                    if (blockingLoadSpinner != null) {
-                        blockingLoadSpinner.dismiss();
-                        blockingLoadSpinner = null;
+                    if (details.rawAppList != null) {
+                        parsedAppList = NvHTTP.getAppListByReader(new StringReader(details.rawAppList));
                     }
                 } catch (XmlPullParserException | IOException e) {
                     e.printStackTrace();
                 }
+
+                final List<NvApp> finalParsedAppList = parsedAppList;
+                AppView.this.runOnUiThread(() -> handleComputerUpdateOnMainThread(details, finalParsedAppList));
             }
         });
 
@@ -303,6 +305,15 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // A newly entered AppView represents a new user launch flow. Activity recreation
+        // retains the explicit-termination suppression for the existing flow.
+        if (savedInstanceState == null) {
+            Game.terminatedByUser = false;
+        } else {
+            autoDesktopConfirmationCancelled = savedInstanceState.getBoolean(
+                    AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE, false);
+        }
 
         // Assume we're in the foreground when created to avoid a race
         // between binding to CMS and onResume()
@@ -345,6 +356,13 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         // Bind to the computer manager service
         bindService(new Intent(this, ComputerManagerService.class), serviceConnection,
                 Service.BIND_AUTO_CREATE);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putBoolean(AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE,
+                autoDesktopConfirmationCancelled || autoDesktopConfirmationPending);
+        super.onSaveInstanceState(outState);
     }
 
     private void updateHiddenApps(boolean hideImmediately) {
@@ -401,6 +419,14 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     protected void onResume() {
         super.onResume();
 
+        // A dispatched launch pauses AppView. If this instance becomes visible again,
+        // allow the coordinator to handle a legitimate lifecycle resume.
+        if (autoDesktopLaunchDispatched) {
+            autoDesktopLaunchPending = false;
+            autoDesktopLaunchDispatched = false;
+            beginFreshServerInfoWait();
+        }
+
         // Display a decoder crash notification if we've returned after a crash
         UiHelper.showDecoderCrashDialog(this);
 
@@ -419,6 +445,25 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         } else {
             profilesButton.setText(activeProfileName);
             profilesButton.extend();
+        }
+    }
+
+    @MainThread
+    private void beginFreshServerInfoWait() {
+        receivedServerInfo = false;
+        requireFreshServerInfo = true;
+        invalidatedStateForFreshServerInfo = false;
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+
+        // Handles dialog dismissal through Back/outside-touch in addition to the Cancel button.
+        if (hasFocus && autoDesktopConfirmationPending && !autoDesktopLaunchDispatched) {
+            autoDesktopConfirmationPending = false;
+            autoDesktopLaunchPending = false;
+            autoDesktopConfirmationCancelled = true;
         }
     }
 
@@ -631,6 +676,46 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         }
     }
 
+    @MainThread
+    private void handleComputerUpdateOnMainThread(ComputerDetails details, List<NvApp> parsedAppList) {
+        if (details.state != ComputerDetails.State.ONLINE ||
+                details.pairState != PairingManager.PairState.PAIRED) {
+            // UNKNOWN may update the visible running marker, but it is not fresh
+            // server information and must never release the auto-launch gate.
+            updateUiWithServerinfo(details);
+            return;
+        }
+
+        receivedServerInfo = true;
+        requireFreshServerInfo = false;
+        lastRunningAppId = details.runningGameId;
+
+        boolean appListChanged = details.rawAppList != null &&
+                !details.rawAppList.equals(lastRawApplist);
+        boolean appListReady = true;
+
+        if (appListChanged) {
+            if (parsedAppList == null) {
+                // Keep the previous raw list so a later callback can retry parsing.
+                appListReady = false;
+            } else {
+                lastRawApplist = details.rawAppList;
+                updateUiWithAppList(parsedAppList);
+
+                if (blockingLoadSpinner != null) {
+                    blockingLoadSpinner.dismiss();
+                    blockingLoadSpinner = null;
+                }
+            }
+        }
+
+        updateUiWithServerinfo(details);
+
+        if (appListReady) {
+            coordinateAutoDesktopLaunch();
+        }
+    }
+
     private void updateUiWithServerinfo(final ComputerDetails details) {
         AppView.this.runOnUiThread(new Runnable() {
             @Override
@@ -644,8 +729,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     // There can only be one or zero apps running.
                     if (existingApp.isRunning &&
                             existingApp.app.getAppId() == details.runningGameId) {
-                        // This app was running and still is, so we're done now
-                        return;
+                        // This app was running and still is
                     }
                     else if (existingApp.app.getAppId() == details.runningGameId) {
                         // This app wasn't running but now is
@@ -665,8 +749,6 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 if (updated) {
                     appGridAdapter.notifyDataSetChanged();
                 }
-
-                tryAutoResumeRunningDesktopOnce();
             }
         });
     }
@@ -679,32 +761,72 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         return name.equalsIgnoreCase("Desktop") || name.equals("桌面");
     }
 
-    private void tryAutoResumeRunningDesktopOnce() {
-        if (autoResumeDesktopAttempted) {
-            return;
-        }
-
-        if (Game.terminatedByUser) {
-            return;
-        }
-
-        if (lastRunningAppId == 0) {
+    @MainThread
+    private void coordinateAutoDesktopLaunch() {
+        if (computer == null || computer.state != ComputerDetails.State.ONLINE ||
+                computer.pairState != PairingManager.PairState.PAIRED ||
+                !receivedServerInfo || requireFreshServerInfo || autoDesktopLaunchPending ||
+                autoDesktopConfirmationCancelled || Game.terminatedByUser) {
             return;
         }
 
         NvApp desktopApp = null;
         for (int i = 0; i < appGridAdapter.getCount(); i++) {
             AppObject obj = (AppObject) appGridAdapter.getItem(i);
-            if (isDesktopApp(obj.app) && obj.app.getAppId() == lastRunningAppId) {
+            if (isDesktopApp(obj.app)) {
                 desktopApp = obj.app;
                 break;
             }
         }
 
-        if (desktopApp != null) {
-            autoResumeDesktopAttempted = true;
-            ServerHelper.doStart(AppView.this, desktopApp, computer, managerBinder, prefConfig.useVirtualDisplay);
+        if (desktopApp == null) {
+            return;
         }
+
+        boolean shouldAutoResume = lastRunningAppId == desktopApp.getAppId();
+        boolean shouldAutoStart = autoStartDesktopRequested && lastRunningAppId == 0;
+        if (!shouldAutoResume && !shouldAutoStart) {
+            // Another app is running, or cold-start auto Desktop is disabled.
+            return;
+        }
+
+        if (prefConfig.useVirtualDisplay &&
+                !(computer.vDisplaySupported && computer.vDisplayDriverReady)) {
+            final NvApp finalDesktopApp = desktopApp;
+            autoDesktopLaunchPending = true;
+            autoDesktopConfirmationPending = true;
+            UiHelper.displayVdisplayConfirmationDialog(
+                    AppView.this,
+                    computer,
+                    () -> {
+                        autoDesktopConfirmationPending = false;
+                        dispatchAutoDesktopLaunch(finalDesktopApp, true);
+                    },
+                    () -> {
+                        autoDesktopConfirmationPending = false;
+                        autoDesktopLaunchPending = false;
+                        autoDesktopConfirmationCancelled = true;
+                    }
+            );
+        } else {
+            dispatchAutoDesktopLaunch(desktopApp, prefConfig.useVirtualDisplay);
+        }
+    }
+
+    @MainThread
+    private void dispatchAutoDesktopLaunch(NvApp desktopApp, boolean withVirtualDisplay) {
+        if (managerBinder == null || computer == null ||
+                computer.state != ComputerDetails.State.ONLINE ||
+                computer.pairState != PairingManager.PairState.PAIRED ||
+                !receivedServerInfo || requireFreshServerInfo || computer.activeAddress == null) {
+            autoDesktopLaunchPending = false;
+            autoDesktopLaunchDispatched = false;
+            return;
+        }
+
+        autoDesktopLaunchPending = true;
+        autoDesktopLaunchDispatched = true;
+        ServerHelper.doStart(AppView.this, desktopApp, computer, managerBinder, withVirtualDisplay);
     }
 
     private void updateUiWithAppList(final List<NvApp> appList) {
@@ -778,50 +900,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     appGridAdapter.notifyDataSetChanged();
                 }
 
-                tryAutoStartDesktopStreamOnce(appList);
             }
         });
-    }
-
-    private void tryAutoStartDesktopStreamOnce(List<NvApp> appList) {
-        if (!receivedServerInfo) {
-            return;
-        }
-
-        if (!autoStartDesktopRequested || autoStartDesktopAttempted) {
-            return;
-        }
-
-        if (appList == null || appList.isEmpty()) {
-            return;
-        }
-
-        autoStartDesktopAttempted = true;
-
-        NvApp desktopApp = null;
-        for (NvApp app : appList) {
-            if (isDesktopApp(app)) {
-                desktopApp = app;
-                break;
-            }
-        }
-
-        if (desktopApp != null) {
-            // Only auto-start if nothing else is running or we're already running the desktop
-            if (lastRunningAppId == 0 || lastRunningAppId == desktopApp.getAppId()) {
-                final NvApp finalDesktopApp = desktopApp;
-                if (prefConfig.useVirtualDisplay && !(computer.vDisplaySupported && computer.vDisplayDriverReady)) {
-                    UiHelper.displayVdisplayConfirmationDialog(
-                            AppView.this,
-                            computer,
-                            () -> ServerHelper.doStart(AppView.this, finalDesktopApp, computer, managerBinder, true),
-                            null
-                    );
-                } else {
-                    ServerHelper.doStart(AppView.this, desktopApp, computer, managerBinder, prefConfig.useVirtualDisplay);
-                }
-            }
-        }
     }
 
     @Override
