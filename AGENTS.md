@@ -30,15 +30,51 @@ app\build\outputs\apk\nonRoot_game\debug\
 
 ---
 
-## Working Rules
+## Development Workflow
 
-Before modifying code, run:
+Before any modification, run:
 
 ```powershell
 git status
 git branch --show-current
+git diff --check
 git diff --name-only
 ```
+
+Before changing code:
+
+1. Read the relevant source files.
+2. Explain the root cause.
+3. Explain the proposed design.
+4. List the files that need to change.
+5. Identify likely side effects.
+6. Wait for confirmation before making non-trivial state-machine, lifecycle, concurrency, or input-system changes.
+
+After modifying code:
+
+```powershell
+git diff --check
+git diff --name-only
+.\gradlew.bat :app:assembleNonRoot_gameDebug
+```
+
+Every completed task must report:
+
+1. Root cause
+2. Design used
+3. Files changed
+4. Important behavior changes
+5. Side effects and remaining risks
+6. `git diff --check` result
+7. Build command and result
+8. APK output path
+9. Real-device regression checklist
+
+Compilation success does not prove lifecycle, concurrency, or input-state correctness. Always provide a real-device test plan.
+
+---
+
+## Git Safety
 
 Do not execute these commands unless explicitly requested:
 
@@ -49,21 +85,51 @@ git reset --hard
 git commit
 git push
 git merge
+git rebase
+git restore
 ```
 
-Additional rules:
+Rules:
 
-- Modify only files required for the current task.
-- Do not reformat unrelated files.
+- Do not stage or commit files unless explicitly requested.
+- Never use `git add .`.
 - Do not overwrite user changes.
-- Do not silently restore or revert files.
+- Do not silently restore files.
+- Do not delete untracked files.
+- Do not push directly to a remote without confirmation.
+- Do not use force push.
+- Do not modify Git history without explicit approval.
 - Do not add APKs, `build/`, IDE caches, or `agent_reports/` to Git.
-- Explain the intended design before a non-trivial state-machine or input-system change.
-- Prefer the smallest correct change over broad refactoring.
-- After code changes, run `git diff --check`.
-- After code changes, build the Debug APK.
-- Report the exact changed files and the first real build error, if any.
-- Compilation success does not prove lifecycle or input-state correctness; provide an explicit real-device test plan.
+- If Git reports an unsafe repository, only trust the specific project path; never use `safe.directory "*"`.
+- The expected local repository path may be:
+
+```text
+C:\zhq
+```
+
+The current branch should be checked before each task.
+
+---
+
+## Documentation Rules
+
+The following files are project documents:
+
+```text
+AGENTS.md
+PROJECT_HISTORY.md
+ARCHITECTURE.md
+```
+
+Do not modify them unless explicitly requested.
+
+When a major feature or stability fix is completed and real-device testing passes:
+
+- Update `PROJECT_HISTORY.md`
+- Update `ARCHITECTURE.md` only if architecture actually changed
+- Keep `AGENTS.md` concise and rule-focused
+
+The actual source code is always authoritative. Documentation provides context but must not override current implementation.
 
 ---
 
@@ -98,6 +164,8 @@ Required behavior:
 - User-initiated disconnect or confirmed quit must suppress automatic resume.
 - Home, lock screen, and background lifecycle interruptions may resume Desktop.
 - Avoid duplicate `ServerHelper.doStart()` calls.
+- Virtual-display confirmation must not appear repeatedly from duplicate callbacks.
+- A pending launch state must not become a permanent lockout after cancellation, failure, or a later valid retry.
 
 Any changes to `AppView.java`, `PcView.java`, or `Game.java` must be reviewed as lifecycle/state-machine changes.
 
@@ -128,7 +196,15 @@ currentPos += (targetAccum - currentPos) * alpha;
 
 Do not convert touch displacement into continuous joystick-style movement.
 
-Do not make speculative touch-feel changes together with unrelated fixes.
+Do not introduce:
+
+- Adaptive sensitivity
+- Velocity-dependent gain
+- Dynamic damping
+- Unrequested acceleration curves
+- Unrequested smoothing modes
+
+Do not make touch-feel changes together with unrelated fixes.
 
 Potential concurrency work must account for:
 
@@ -186,6 +262,46 @@ Changes to controller input must consider:
 - Multi-touch
 - Full-state reset on controller teardown
 
+Do not fix shared-key ownership using isolated `|=` or `&= ~` patches without reviewing the aggregate input-state model.
+
+---
+
+## Orientation and Resolution
+
+Existing settings include automatic screen orientation and automatic resolution inversion.
+
+Always-forced portrait is a cross-cutting feature.
+
+Any portrait-mode change must consider:
+
+- Runtime orientation requests in `Game.java`
+- `rotateScreen()`
+- `setPreferredOrientationForActivity()`
+- `onConfigurationChanged()`
+- Decoder width/height inversion
+- Video scaling
+- `RelativeTouchContext`
+- Virtual-controller layout
+- Automatic resume
+- External displays
+
+Do not implement forced portrait only through `AndroidManifest.xml`.
+
+Do not modify orientation, stream resolution, touch scaling, and touchpad smoothing parameters in the same task unless explicitly requested.
+
+---
+
+## Scope Control
+
+- Modify only files required for the current task.
+- Do not reformat unrelated files.
+- Do not rename unrelated symbols.
+- Do not reorganize packages without approval.
+- Do not upgrade Gradle, AGP, SDK, NDK, Java, or dependencies unless explicitly requested.
+- Do not change application ID, signing, build variants, or release configuration unless explicitly requested.
+- Prefer the smallest correct change over broad refactoring.
+- Preserve backward compatibility where practical.
+
 ---
 
 ## Key Files
@@ -211,16 +327,46 @@ app/src/main/res/values-zh-rCN/strings.xml
 
 ---
 
-## Required Final Report for Code Tasks
+## Real-Device Testing Expectations
 
-Provide:
+For streaming-state changes, test:
 
-1. Problem and root cause
-2. Design used
-3. Files changed
-4. Important code-path changes
-5. `git diff --check` result
-6. Build command and result
-7. APK output path
-8. Remaining risks
-9. Real-device regression checklist
+- Cached app list present
+- No app running
+- Desktop already running
+- Another game running
+- Automatic Desktop setting disabled
+- Repeated Home/return
+- Lock/unlock
+- Background/foreground
+- Explicit disconnect
+- Quit confirmation: Yes and No
+- Virtual-display confirmation: confirm and cancel
+- No duplicate Game Activity or duplicate confirmation dialog
+
+For touchpad changes, test:
+
+- Fine movement
+- Large movement
+- Fast direction changes
+- Single click
+- Rapid clicks
+- Double click
+- Double-tap drag
+- Glide
+- New touch interrupting old glide
+- Long-duration use
+- Multi-pointer transitions
+- Different stream resolutions and orientations
+
+For virtual-controller changes, test:
+
+- Tap
+- Hold
+- Slide
+- Hold-to-slide takeover
+- ACTION_CANCEL
+- Concurrent controls
+- Shared-key mappings
+- Controller hide/remove/disconnect
+- No stuck buttons, sticks, or triggers
