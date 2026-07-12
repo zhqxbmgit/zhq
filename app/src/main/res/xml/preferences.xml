@@ -798,33 +798,81 @@
             android:title="@string/title_square_buttons"
             app:iconSpaceReserved="false" />
 
-        <EditTextPreference
-            android:dialogMessage="@string/dialog_slide_button_threshold_range"
-            android:key="slideButtonUpThresholdDp"
-            android:singleLine="true"
-            android:title="@string/title_slide_button_up_threshold"
-            app:iconSpaceReserved="false" />
+        <PreferenceCategory
+            android:title="@string/title_slide_button_parameters"
+            app:iconSpaceReserved="false">
 
-        <EditTextPreference
-            android:dialogMessage="@string/dialog_slide_button_threshold_range"
-            android:key="slideButtonDownThresholdDp"
-            android:singleLine="true"
-            android:title="@string/title_slide_button_down_threshold"
-            app:iconSpaceReserved="false" />
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_threshold_range"
+                android:key="slideButtonUpThresholdDp"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_up_threshold"
+                app:iconSpaceReserved="false" />
 
-        <EditTextPreference
-            android:dialogMessage="@string/dialog_slide_button_tap_hold_range"
-            android:key="slideButtonTapHoldMs"
-            android:singleLine="true"
-            android:title="@string/title_slide_button_tap_hold"
-            app:iconSpaceReserved="false" />
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_threshold_range"
+                android:key="slideButtonDownThresholdDp"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_down_threshold"
+                app:iconSpaceReserved="false" />
 
-        <EditTextPreference
-            android:dialogMessage="@string/dialog_slide_button_long_press_range"
-            android:key="slideButtonLongPressMs"
-            android:singleLine="true"
-            android:title="@string/title_slide_button_long_press"
-            app:iconSpaceReserved="false" />
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_tap_hold_range"
+                android:key="slideButtonTapHoldMs"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_tap_hold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_long_press_range"
+                android:key="slideButtonLongPressMs"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_long_press"
+                app:iconSpaceReserved="false" />
+
+        </PreferenceCategory>
+
+        <PreferenceCategory
+            android:key="category_slide_button_lr_parameters"
+            android:title="@string/title_slide_button_lr_parameters"
+            app:iconSpaceReserved="false">
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_threshold_range"
+                android:key="slideButtonLrLeftThresholdDp"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_lr_left_threshold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_threshold_range"
+                android:key="slideButtonLrRightThresholdDp"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_lr_right_threshold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_threshold_range"
+                android:key="slideButtonLrUpThresholdDp"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_lr_up_threshold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_tap_hold_range"
+                android:key="slideButtonLrTapHoldMs"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_lr_tap_hold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_slide_button_long_press_range"
+                android:key="slideButtonLrLongPressMs"
+                android:singleLine="true"
+                android:title="@string/title_slide_button_lr_long_press"
+                app:iconSpaceReserved="false" />
+
+        </PreferenceCategory>
 
         <com.limelight.preferences.ConfirmDeleteKeyboardPreference
             android:dependency="checkbox_enable_keyboard"

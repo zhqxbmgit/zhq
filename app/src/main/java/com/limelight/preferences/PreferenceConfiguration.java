@@ -37,6 +37,11 @@ public class PreferenceConfiguration {
     public static final String SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING = "slideButtonDownThresholdDp";
     public static final String SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING = "slideButtonTapHoldMs";
     public static final String SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING = "slideButtonLongPressMs";
+    public static final String SLIDE_BUTTON_LR_LEFT_THRESHOLD_DP_PREF_STRING = "slideButtonLrLeftThresholdDp";
+    public static final String SLIDE_BUTTON_LR_RIGHT_THRESHOLD_DP_PREF_STRING = "slideButtonLrRightThresholdDp";
+    public static final String SLIDE_BUTTON_LR_UP_THRESHOLD_DP_PREF_STRING = "slideButtonLrUpThresholdDp";
+    public static final String SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING = "slideButtonLrTapHoldMs";
+    public static final String SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING = "slideButtonLrLongPressMs";
 
     private static final String LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps";
     private static final String LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround";
@@ -224,6 +229,11 @@ public class PreferenceConfiguration {
     public static final float DEFAULT_SLIDE_BUTTON_DOWN_THRESHOLD_DP = 3.0f;
     public static final int DEFAULT_SLIDE_BUTTON_TAP_HOLD_MS = 25;
     public static final int DEFAULT_SLIDE_BUTTON_LONG_PRESS_MS = 400;
+    public static final float DEFAULT_SLIDE_BUTTON_LR_LEFT_THRESHOLD_DP = 12.0f;
+    public static final float DEFAULT_SLIDE_BUTTON_LR_RIGHT_THRESHOLD_DP = 3.0f;
+    public static final float DEFAULT_SLIDE_BUTTON_LR_UP_THRESHOLD_DP = 2.0f;
+    public static final int DEFAULT_SLIDE_BUTTON_LR_TAP_HOLD_MS = 25;
+    public static final int DEFAULT_SLIDE_BUTTON_LR_LONG_PRESS_MS = 400;
 
     private static final float MIN_SLIDE_BUTTON_THRESHOLD_DP = 0.1f;
     private static final float MAX_SLIDE_BUTTON_THRESHOLD_DP = 50.0f;
@@ -363,6 +373,11 @@ public class PreferenceConfiguration {
     public float slideButtonDownThresholdDp;
     public int slideButtonTapHoldMs;
     public int slideButtonLongPressMs;
+    public float slideButtonLrLeftThresholdDp;
+    public float slideButtonLrRightThresholdDp;
+    public float slideButtonLrUpThresholdDp;
+    public int slideButtonLrTapHoldMs;
+    public int slideButtonLrLongPressMs;
 
     //官方虚拟按钮风格
     public boolean enableOnScreenStyleOfficial;
@@ -794,6 +809,31 @@ private static int getFramePacingValue(Context context) {
                 MIN_SLIDE_BUTTON_LONG_PRESS_MS, MAX_SLIDE_BUTTON_LONG_PRESS_MS);
     }
 
+    public static float parseSlideButtonLrLeftThresholdDp(String value) {
+        return parseClampedFloat(value, DEFAULT_SLIDE_BUTTON_LR_LEFT_THRESHOLD_DP,
+                MIN_SLIDE_BUTTON_THRESHOLD_DP, MAX_SLIDE_BUTTON_THRESHOLD_DP);
+    }
+
+    public static float parseSlideButtonLrRightThresholdDp(String value) {
+        return parseClampedFloat(value, DEFAULT_SLIDE_BUTTON_LR_RIGHT_THRESHOLD_DP,
+                MIN_SLIDE_BUTTON_THRESHOLD_DP, MAX_SLIDE_BUTTON_THRESHOLD_DP);
+    }
+
+    public static float parseSlideButtonLrUpThresholdDp(String value) {
+        return parseClampedFloat(value, DEFAULT_SLIDE_BUTTON_LR_UP_THRESHOLD_DP,
+                MIN_SLIDE_BUTTON_THRESHOLD_DP, MAX_SLIDE_BUTTON_THRESHOLD_DP);
+    }
+
+    public static int parseSlideButtonLrTapHoldMs(String value) {
+        return parseClampedInt(value, DEFAULT_SLIDE_BUTTON_LR_TAP_HOLD_MS,
+                MIN_SLIDE_BUTTON_TAP_HOLD_MS, MAX_SLIDE_BUTTON_TAP_HOLD_MS);
+    }
+
+    public static int parseSlideButtonLrLongPressMs(String value) {
+        return parseClampedInt(value, DEFAULT_SLIDE_BUTTON_LR_LONG_PRESS_MS,
+                MIN_SLIDE_BUTTON_LONG_PRESS_MS, MAX_SLIDE_BUTTON_LONG_PRESS_MS);
+    }
+
     public static PreferenceConfiguration readPreferences(Context context, SharedPreferences prefs) {
         if (prefs == null) {
             prefs = ProfilesManager.getInstance().getOverlayingSharedPreferences(context);
@@ -1081,6 +1121,16 @@ private static int getFramePacingValue(Context context) {
                 getStringPreference(prefs, SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING));
         config.slideButtonLongPressMs = parseSlideButtonLongPressMs(
                 getStringPreference(prefs, SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING));
+        config.slideButtonLrLeftThresholdDp = parseSlideButtonLrLeftThresholdDp(
+                getStringPreference(prefs, SLIDE_BUTTON_LR_LEFT_THRESHOLD_DP_PREF_STRING));
+        config.slideButtonLrRightThresholdDp = parseSlideButtonLrRightThresholdDp(
+                getStringPreference(prefs, SLIDE_BUTTON_LR_RIGHT_THRESHOLD_DP_PREF_STRING));
+        config.slideButtonLrUpThresholdDp = parseSlideButtonLrUpThresholdDp(
+                getStringPreference(prefs, SLIDE_BUTTON_LR_UP_THRESHOLD_DP_PREF_STRING));
+        config.slideButtonLrTapHoldMs = parseSlideButtonLrTapHoldMs(
+                getStringPreference(prefs, SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING));
+        config.slideButtonLrLongPressMs = parseSlideButtonLrLongPressMs(
+                getStringPreference(prefs, SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING));
 
         config.touchPadSensitivity=prefs.getInt("seekbar_touchpad_sensitivity_opacity",100);
 
