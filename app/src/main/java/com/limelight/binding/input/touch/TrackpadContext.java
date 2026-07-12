@@ -2,6 +2,7 @@ package com.limelight.binding.input.touch;
 
 import com.limelight.nvstream.NvConnection;
 import com.limelight.nvstream.input.MouseButtonPacket;
+import com.limelight.preferences.PreferenceConfiguration;
 
 import android.content.Context;
 import android.os.Build;
@@ -23,16 +24,13 @@ public class TrackpadContext implements TouchContext {
     private final NvConnection conn;
     private final int actionIndex;
     private boolean swapAxis = false;
-    private float finalMultiplierX, finalMultiplierY;
+    private final Context applicationContext;
+    private final float baseSensitivityX, baseSensitivityY;
+    private float gestureMultiplierX, gestureMultiplierY;
     private final Vibrator vibrator;   // 点击振动器,可为null(无振动)
 
-    private static final float LINEAR_SPEED_MULTIPLIER = 7.0f;
-    private static final int TAP_DURATION_MAX = 300;
-    private static final int DOUBLE_TAP_INTERVAL = 130;
-    private static final float TAP_MOVEMENT_THRESHOLD = 8f;
     // 🎯 单击按住时长(毫秒):按下后保持这么久再抬起,确保游戏按帧轮询能采到"按下"状态。
     //    游戏漏点就调大(80、100);桌面/连点偏慢可调小(40)。
-    private static final int TAP_HOLD_MS = 25;
     // 🎯 点击振动时长(毫秒):盲操作时确认"点到了"。0=关闭振动。
     //    注:Android10+用系统清脆点击效果(此时长不生效);Android9及以下才用这个时长。
     private static final int CLICK_VIBRATE_MS = 20;
@@ -41,12 +39,18 @@ public class TrackpadContext implements TouchContext {
     private static final double DT = TICK_RATE_MS / 1000.0;
 
     // 🎯 时间常数：控制整体跟随快慢 (推荐 0.02 ~ 0.03)
-    private static final double SMOOTHING_TIME_CONSTANT = 0.035;
-    private static final double MAX_VELOCITY = 15000.0;
-    private static final double MAX_ACCELERATION = 80000.0;
-    private static final double GLIDE_DECELERATION = 120000.0;
     private static final double POS_THRESHOLD = 0.5;
     private static final double VEL_THRESHOLD = 2.0;
+
+    private float gestureLinearSpeedMultiplier;
+    private int gestureTapDurationMaxMs;
+    private int gestureDoubleTapIntervalMs;
+    private float gestureTapMovementThresholdPx;
+    private int gestureTapHoldMs;
+    private double gestureSmoothingTimeConstant;
+    private double gestureMaxVelocity;
+    private double gestureMaxAcceleration;
+    private double gestureGlideDeceleration;
 
     private static final ScheduledExecutorService SHARED_TICKER_SERVICE = Executors.newSingleThreadScheduledExecutor();
     private ScheduledFuture<?> tickerFuture = null;
@@ -72,15 +76,15 @@ public class TrackpadContext implements TouchContext {
         this.conn = conn;
         this.actionIndex = actionIndex;
         this.swapAxis = swapAxis;
-        float baseSensX = (sensitivityX == 0) ? 1.0f : sensitivityX / 100f;
-        float baseSensY = (sensitivityY == 0) ? 1.0f : sensitivityY / 100f;
-        this.finalMultiplierX = baseSensX * LINEAR_SPEED_MULTIPLIER;
-        this.finalMultiplierY = baseSensY * LINEAR_SPEED_MULTIPLIER;
+        this.baseSensitivityX = (sensitivityX == 0) ? 1.0f : sensitivityX / 100f;
+        this.baseSensitivityY = (sensitivityY == 0) ? 1.0f : sensitivityY / 100f;
+        this.applicationContext = context == null ? null : context.getApplicationContext();
+        applyGestureParameters(null);
         // 获取振动器(用ApplicationContext避免持有Activity引用导致内存泄漏)
         Vibrator v = null;
-        if (context != null) {
+        if (applicationContext != null) {
             try {
-                v = (Vibrator) context.getApplicationContext().getSystemService(Context.VIBRATOR_SERVICE);
+                v = (Vibrator) applicationContext.getSystemService(Context.VIBRATOR_SERVICE);
             } catch (Exception e) {
                 v = null;
             }
@@ -90,8 +94,41 @@ public class TrackpadContext implements TouchContext {
 
     @Override public int getActionIndex() { return actionIndex; }
 
+    private void applyGestureParameters(PreferenceConfiguration preferences) {
+        if (preferences == null) {
+            gestureLinearSpeedMultiplier = PreferenceConfiguration.DEFAULT_TRACKPAD_LINEAR_SPEED_MULTIPLIER;
+            gestureTapDurationMaxMs = PreferenceConfiguration.DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS;
+            gestureDoubleTapIntervalMs = PreferenceConfiguration.DEFAULT_TRACKPAD_DOUBLE_TAP_INTERVAL_MS;
+            gestureTapMovementThresholdPx = PreferenceConfiguration.DEFAULT_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX;
+            gestureTapHoldMs = PreferenceConfiguration.DEFAULT_TRACKPAD_TAP_HOLD_MS;
+            gestureSmoothingTimeConstant = PreferenceConfiguration.DEFAULT_TRACKPAD_SMOOTHING_TIME_CONSTANT;
+            gestureMaxVelocity = PreferenceConfiguration.DEFAULT_TRACKPAD_MAX_VELOCITY;
+            gestureMaxAcceleration = PreferenceConfiguration.DEFAULT_TRACKPAD_MAX_ACCELERATION;
+            gestureGlideDeceleration = PreferenceConfiguration.DEFAULT_TRACKPAD_GLIDE_DECELERATION;
+        } else {
+            gestureLinearSpeedMultiplier = preferences.trackpadLinearSpeedMultiplier;
+            gestureTapDurationMaxMs = preferences.trackpadTapDurationMaxMs;
+            gestureDoubleTapIntervalMs = preferences.trackpadDoubleTapIntervalMs;
+            gestureTapMovementThresholdPx = preferences.trackpadTapMovementThresholdPx;
+            gestureTapHoldMs = preferences.trackpadTapHoldMs;
+            gestureSmoothingTimeConstant = preferences.trackpadSmoothingTimeConstant;
+            gestureMaxVelocity = preferences.trackpadMaxVelocity;
+            gestureMaxAcceleration = preferences.trackpadMaxAcceleration;
+            gestureGlideDeceleration = preferences.trackpadGlideDeceleration;
+        }
+
+        gestureMultiplierX = baseSensitivityX * gestureLinearSpeedMultiplier;
+        gestureMultiplierY = baseSensitivityY * gestureLinearSpeedMultiplier;
+    }
+
+    private PreferenceConfiguration readGestureParameters() {
+        return applicationContext == null ? null :
+                PreferenceConfiguration.readPreferences(applicationContext);
+    }
+
     private boolean isWithinTapBounds(float touchX, float touchY) {
-        return Math.abs(touchX - originalTouchX) <= TAP_MOVEMENT_THRESHOLD && Math.abs(touchY - originalTouchY) <= TAP_MOVEMENT_THRESHOLD;
+        return Math.abs(touchX - originalTouchX) <= gestureTapMovementThresholdPx &&
+                Math.abs(touchY - originalTouchY) <= gestureTapMovementThresholdPx;
     }
 
     // 🎯 触发一次短促振动(点击反馈)。vibrator为null或时长为0时静默跳过。
@@ -119,6 +156,7 @@ public class TrackpadContext implements TouchContext {
     @Override
     public boolean touchDownEvent(float eventX, float eventY, long eventTime, boolean isNewFinger) {
         if (isNewFinger) {
+            PreferenceConfiguration gesturePreferences = readGestureParameters();
             originalTouchX = lastTouchX = eventX;
             originalTouchY = lastTouchY = eventY;
             originalTouchTime = eventTime;
@@ -127,12 +165,13 @@ public class TrackpadContext implements TouchContext {
             isTouching = true; gliding = false;
 
             synchronized (stateLock) {
+                applyGestureParameters(gesturePreferences);
                 targetAccumX = carryOverX; targetAccumY = carryOverY;
                 currentPosX = targetAccumX; currentPosY = targetAccumY;
                 currentVelX = 0; currentVelY = 0;
                 lastSentX = 0; lastSentY = 0;
             }
-            if (eventTime - lastTapUpTime <= DOUBLE_TAP_INTERVAL) {
+            if (eventTime - lastTapUpTime <= gestureDoubleTapIntervalMs) {
                 conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT); isDragging = true;
             } else { isDragging = false; }
             startSmoothingTicker();
@@ -149,14 +188,14 @@ public class TrackpadContext implements TouchContext {
         if (isDragging) {
             conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT); isDragging = false; lastTapUpTime = eventTime;
         } else if (!confirmedMove) {
-            if (eventTime - originalTouchTime <= TAP_DURATION_MAX && isWithinTapBounds(eventX, eventY)) {
-                // 🎯 按下后延迟抬起:用ticker线程定时发Up,中间保持TAP_HOLD_MS的"按下"状态。
+            if (eventTime - originalTouchTime <= gestureTapDurationMaxMs && isWithinTapBounds(eventX, eventY)) {
+                // 🎯 按下后延迟抬起:用ticker线程定时发Up,中间使用本次触摸快照的按住时长保持"按下"状态。
                 //    不能用Thread.sleep(会卡线程),用调度器延迟发送最干净。
                 conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
                 clickVibrate();   // 单击:发出时振动
                 SHARED_TICKER_SERVICE.schedule(
                         () -> conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT),
-                        TAP_HOLD_MS, TimeUnit.MILLISECONDS);
+                        gestureTapHoldMs, TimeUnit.MILLISECONDS);
                 lastTapUpTime = eventTime;
             }
         }
@@ -174,8 +213,8 @@ public class TrackpadContext implements TouchContext {
             float mappedDy = swapAxis ? totalDx : totalDy;
 
             synchronized (stateLock) {
-                targetAccumX = carryOverX + mappedDx * finalMultiplierX;
-                targetAccumY = carryOverY + mappedDy * finalMultiplierY;
+                targetAccumX = carryOverX + mappedDx * gestureMultiplierX;
+                targetAccumY = carryOverY + mappedDy * gestureMultiplierY;
             }
         }
         lastTouchX = eventX; lastTouchY = eventY;
@@ -209,7 +248,7 @@ public class TrackpadContext implements TouchContext {
             if (gliding) {
                 // 🌟 纯惯性滑行：松手后的丝滑减速
                 double curSpeed = Math.sqrt(currentVelX * currentVelX + currentVelY * currentVelY);
-                double decel = GLIDE_DECELERATION * DT;
+                double decel = gestureGlideDeceleration * DT;
                 if (curSpeed <= decel + VEL_THRESHOLD) {
                     currentVelX = 0; currentVelY = 0;
                     if (!isTouching) shouldStop = true;
@@ -238,7 +277,7 @@ public class TrackpadContext implements TouchContext {
                     double dampingRatio = 1.0;
 
                     // 自然频率 (由时间常数决定)
-                    double omega = 1.0 / SMOOTHING_TIME_CONSTANT;
+                    double omega = 1.0 / gestureSmoothingTimeConstant;
 
                     // 弹簧-阻尼加速度公式： a = (dist * w^2) - (vel * 2 * zeta * w)
                     // 第一项(弹簧)拉向目标，第二项(阻尼)抵抗当前速度(防冲过头/防挂钩)
@@ -247,8 +286,8 @@ public class TrackpadContext implements TouchContext {
 
                     // 限制最大加速度 (防起步抽搐)
                     double accLen = Math.sqrt(accX * accX + accY * accY);
-                    if (accLen > MAX_ACCELERATION) {
-                        double scale = MAX_ACCELERATION / accLen;
+                    if (accLen > gestureMaxAcceleration) {
+                        double scale = gestureMaxAcceleration / accLen;
                         accX *= scale; accY *= scale;
                     }
 
@@ -258,8 +297,8 @@ public class TrackpadContext implements TouchContext {
 
                     // 限制最大速度 (防失控)
                     double velLen = Math.sqrt(currentVelX * currentVelX + currentVelY * currentVelY);
-                    if (velLen > MAX_VELOCITY) {
-                        double scale = MAX_VELOCITY / velLen;
+                    if (velLen > gestureMaxVelocity) {
+                        double scale = gestureMaxVelocity / velLen;
                         currentVelX *= scale; currentVelY *= scale;
                     }
 

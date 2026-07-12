@@ -261,6 +261,96 @@ public class StreamSettings extends AppCompatActivity {
             });
         }
 
+        private String normalizeTrackpadPreferenceValue(String key, String value) {
+            switch (key) {
+                case PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING:
+                    return Float.toString(PreferenceConfiguration.parseTrackpadLinearSpeedMultiplier(value));
+                case PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING:
+                    return Integer.toString(PreferenceConfiguration.parseTrackpadTapDurationMaxMs(value));
+                case PreferenceConfiguration.TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING:
+                    return Integer.toString(PreferenceConfiguration.parseTrackpadDoubleTapIntervalMs(value));
+                case PreferenceConfiguration.TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING:
+                    return Float.toString(PreferenceConfiguration.parseTrackpadTapMovementThresholdPx(value));
+                case PreferenceConfiguration.TRACKPAD_TAP_HOLD_MS_PREF_STRING:
+                    return Integer.toString(PreferenceConfiguration.parseTrackpadTapHoldMs(value));
+                case PreferenceConfiguration.TRACKPAD_SMOOTHING_TIME_CONSTANT_PREF_STRING:
+                    return Double.toString(PreferenceConfiguration.parseTrackpadSmoothingTimeConstant(value));
+                case PreferenceConfiguration.TRACKPAD_MAX_VELOCITY_PREF_STRING:
+                    return Double.toString(PreferenceConfiguration.parseTrackpadMaxVelocity(value));
+                case PreferenceConfiguration.TRACKPAD_MAX_ACCELERATION_PREF_STRING:
+                    return Double.toString(PreferenceConfiguration.parseTrackpadMaxAcceleration(value));
+                case PreferenceConfiguration.TRACKPAD_GLIDE_DECELERATION_PREF_STRING:
+                    return Double.toString(PreferenceConfiguration.parseTrackpadGlideDeceleration(value));
+                default:
+                    throw new IllegalArgumentException("Unknown TrackpadContext preference key: " + key);
+            }
+        }
+
+        private String formatTrackpadRate(double value) {
+            return value == Math.rint(value) ? Long.toString((long) value) : Double.toString(value);
+        }
+
+        private CharSequence getTrackpadPreferenceSummary(String key) {
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(requireContext());
+            switch (key) {
+                case PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_multiplier,
+                            Float.toString(config.trackpadLinearSpeedMultiplier));
+                case PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_ms, config.trackpadTapDurationMaxMs);
+                case PreferenceConfiguration.TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_ms, config.trackpadDoubleTapIntervalMs);
+                case PreferenceConfiguration.TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_px,
+                            Float.toString(config.trackpadTapMovementThresholdPx));
+                case PreferenceConfiguration.TRACKPAD_TAP_HOLD_MS_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_ms, config.trackpadTapHoldMs);
+                case PreferenceConfiguration.TRACKPAD_SMOOTHING_TIME_CONSTANT_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_seconds,
+                            Double.toString(config.trackpadSmoothingTimeConstant));
+                case PreferenceConfiguration.TRACKPAD_MAX_VELOCITY_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_units_per_second,
+                            formatTrackpadRate(config.trackpadMaxVelocity));
+                case PreferenceConfiguration.TRACKPAD_MAX_ACCELERATION_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_units_per_second_squared,
+                            formatTrackpadRate(config.trackpadMaxAcceleration));
+                case PreferenceConfiguration.TRACKPAD_GLIDE_DECELERATION_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_units_per_second_squared,
+                            formatTrackpadRate(config.trackpadGlideDeceleration));
+                default:
+                    throw new IllegalArgumentException("Unknown TrackpadContext preference key: " + key);
+            }
+        }
+
+        private void configureTrackpadNumericPreference(String key, boolean allowDecimal) {
+            EditTextPreference preference = findPreference(key);
+            if (preference == null) {
+                return;
+            }
+
+            preference.setDefaultValue(normalizeTrackpadPreferenceValue(key, null));
+            String normalizedValue = normalizeTrackpadPreferenceValue(key, preference.getText());
+            if (!normalizedValue.equals(preference.getText())) {
+                preference.setText(normalizedValue);
+            }
+
+            preference.setOnBindEditTextListener(editText -> {
+                int inputType = InputType.TYPE_CLASS_NUMBER;
+                if (allowDecimal) {
+                    inputType |= InputType.TYPE_NUMBER_FLAG_DECIMAL;
+                }
+                editText.setInputType(inputType);
+                editText.setSelectAllOnFocus(true);
+            });
+            preference.setSummaryProvider(ignored -> getTrackpadPreferenceSummary(key));
+            preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
+                String normalizedNewValue = normalizeTrackpadPreferenceValue(key,
+                        newValue == null ? null : newValue.toString());
+                ((EditTextPreference) changedPreference).setText(normalizedNewValue);
+                return false;
+            });
+        }
+
         private void setValue(String preferenceKey, String value) {
             ListPreference pref = (ListPreference) findPreference(preferenceKey);
 
@@ -440,6 +530,24 @@ public class StreamSettings extends AppCompatActivity {
                     PreferenceConfiguration.SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING, false);
             configureSlideButtonNumericPreference(
                     PreferenceConfiguration.SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING, false);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING, false);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING, false);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_TAP_HOLD_MS_PREF_STRING, false);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_SMOOTHING_TIME_CONSTANT_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_MAX_VELOCITY_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_MAX_ACCELERATION_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_GLIDE_DECELERATION_PREF_STRING, true);
 
             AppCompatActivity activity = (AppCompatActivity) requireActivity();
             PackageManager pm = activity.getPackageManager();

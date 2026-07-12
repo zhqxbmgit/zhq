@@ -42,6 +42,15 @@ public class PreferenceConfiguration {
     public static final String SLIDE_BUTTON_LR_UP_THRESHOLD_DP_PREF_STRING = "slideButtonLrUpThresholdDp";
     public static final String SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING = "slideButtonLrTapHoldMs";
     public static final String SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING = "slideButtonLrLongPressMs";
+    public static final String TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING = "trackpadLinearSpeedMultiplier";
+    public static final String TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING = "trackpadTapDurationMaxMs";
+    public static final String TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING = "trackpadDoubleTapIntervalMs";
+    public static final String TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING = "trackpadTapMovementThresholdPx";
+    public static final String TRACKPAD_TAP_HOLD_MS_PREF_STRING = "trackpadTapHoldMs";
+    public static final String TRACKPAD_SMOOTHING_TIME_CONSTANT_PREF_STRING = "trackpadSmoothingTimeConstant";
+    public static final String TRACKPAD_MAX_VELOCITY_PREF_STRING = "trackpadMaxVelocity";
+    public static final String TRACKPAD_MAX_ACCELERATION_PREF_STRING = "trackpadMaxAcceleration";
+    public static final String TRACKPAD_GLIDE_DECELERATION_PREF_STRING = "trackpadGlideDeceleration";
 
     private static final String LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps";
     private static final String LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround";
@@ -234,6 +243,15 @@ public class PreferenceConfiguration {
     public static final float DEFAULT_SLIDE_BUTTON_LR_UP_THRESHOLD_DP = 2.0f;
     public static final int DEFAULT_SLIDE_BUTTON_LR_TAP_HOLD_MS = 25;
     public static final int DEFAULT_SLIDE_BUTTON_LR_LONG_PRESS_MS = 400;
+    public static final float DEFAULT_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 7.0f;
+    public static final int DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS = 300;
+    public static final int DEFAULT_TRACKPAD_DOUBLE_TAP_INTERVAL_MS = 130;
+    public static final float DEFAULT_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX = 8.0f;
+    public static final int DEFAULT_TRACKPAD_TAP_HOLD_MS = 25;
+    public static final double DEFAULT_TRACKPAD_SMOOTHING_TIME_CONSTANT = 0.035;
+    public static final double DEFAULT_TRACKPAD_MAX_VELOCITY = 15000.0;
+    public static final double DEFAULT_TRACKPAD_MAX_ACCELERATION = 80000.0;
+    public static final double DEFAULT_TRACKPAD_GLIDE_DECELERATION = 120000.0;
 
     private static final float MIN_SLIDE_BUTTON_THRESHOLD_DP = 0.1f;
     private static final float MAX_SLIDE_BUTTON_THRESHOLD_DP = 50.0f;
@@ -241,6 +259,24 @@ public class PreferenceConfiguration {
     private static final int MAX_SLIDE_BUTTON_TAP_HOLD_MS = 200;
     private static final int MIN_SLIDE_BUTTON_LONG_PRESS_MS = 50;
     private static final int MAX_SLIDE_BUTTON_LONG_PRESS_MS = 2000;
+    private static final float MIN_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 0.1f;
+    private static final float MAX_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 30.0f;
+    private static final int MIN_TRACKPAD_TAP_DURATION_MAX_MS = 50;
+    private static final int MAX_TRACKPAD_TAP_DURATION_MAX_MS = 1500;
+    private static final int MIN_TRACKPAD_DOUBLE_TAP_INTERVAL_MS = 50;
+    private static final int MAX_TRACKPAD_DOUBLE_TAP_INTERVAL_MS = 1000;
+    private static final float MIN_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX = 0.5f;
+    private static final float MAX_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX = 100.0f;
+    private static final int MIN_TRACKPAD_TAP_HOLD_MS = 1;
+    private static final int MAX_TRACKPAD_TAP_HOLD_MS = 200;
+    private static final double MIN_TRACKPAD_SMOOTHING_TIME_CONSTANT = 0.010;
+    private static final double MAX_TRACKPAD_SMOOTHING_TIME_CONSTANT = 0.200;
+    private static final double MIN_TRACKPAD_MAX_VELOCITY = 1000.0;
+    private static final double MAX_TRACKPAD_MAX_VELOCITY = 50000.0;
+    private static final double MIN_TRACKPAD_MAX_ACCELERATION = 5000.0;
+    private static final double MAX_TRACKPAD_MAX_ACCELERATION = 500000.0;
+    private static final double MIN_TRACKPAD_GLIDE_DECELERATION = 5000.0;
+    private static final double MAX_TRACKPAD_GLIDE_DECELERATION = 500000.0;
 
     public static final int FRAME_PACING_MIN_LATENCY = 0;
     public static final int FRAME_PACING_BALANCED = 1;
@@ -378,6 +414,15 @@ public class PreferenceConfiguration {
     public float slideButtonLrUpThresholdDp;
     public int slideButtonLrTapHoldMs;
     public int slideButtonLrLongPressMs;
+    public float trackpadLinearSpeedMultiplier;
+    public int trackpadTapDurationMaxMs;
+    public int trackpadDoubleTapIntervalMs;
+    public float trackpadTapMovementThresholdPx;
+    public int trackpadTapHoldMs;
+    public double trackpadSmoothingTimeConstant;
+    public double trackpadMaxVelocity;
+    public double trackpadMaxAcceleration;
+    public double trackpadGlideDeceleration;
 
     //官方虚拟按钮风格
     public boolean enableOnScreenStyleOfficial;
@@ -768,6 +813,22 @@ private static int getFramePacingValue(Context context) {
         }
     }
 
+    private static double parseClampedDouble(String value, double defaultValue, double minValue, double maxValue) {
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+
+        try {
+            double parsedValue = Double.parseDouble(value.trim());
+            if (Double.isNaN(parsedValue) || Double.isInfinite(parsedValue)) {
+                return defaultValue;
+            }
+            return Math.max(minValue, Math.min(maxValue, parsedValue));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     private static int parseClampedInt(String value, int defaultValue, int minValue, int maxValue) {
         if (value == null || value.trim().isEmpty()) {
             return defaultValue;
@@ -832,6 +893,51 @@ private static int getFramePacingValue(Context context) {
     public static int parseSlideButtonLrLongPressMs(String value) {
         return parseClampedInt(value, DEFAULT_SLIDE_BUTTON_LR_LONG_PRESS_MS,
                 MIN_SLIDE_BUTTON_LONG_PRESS_MS, MAX_SLIDE_BUTTON_LONG_PRESS_MS);
+    }
+
+    public static float parseTrackpadLinearSpeedMultiplier(String value) {
+        return parseClampedFloat(value, DEFAULT_TRACKPAD_LINEAR_SPEED_MULTIPLIER,
+                MIN_TRACKPAD_LINEAR_SPEED_MULTIPLIER, MAX_TRACKPAD_LINEAR_SPEED_MULTIPLIER);
+    }
+
+    public static int parseTrackpadTapDurationMaxMs(String value) {
+        return parseClampedInt(value, DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS,
+                MIN_TRACKPAD_TAP_DURATION_MAX_MS, MAX_TRACKPAD_TAP_DURATION_MAX_MS);
+    }
+
+    public static int parseTrackpadDoubleTapIntervalMs(String value) {
+        return parseClampedInt(value, DEFAULT_TRACKPAD_DOUBLE_TAP_INTERVAL_MS,
+                MIN_TRACKPAD_DOUBLE_TAP_INTERVAL_MS, MAX_TRACKPAD_DOUBLE_TAP_INTERVAL_MS);
+    }
+
+    public static float parseTrackpadTapMovementThresholdPx(String value) {
+        return parseClampedFloat(value, DEFAULT_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX,
+                MIN_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX, MAX_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX);
+    }
+
+    public static int parseTrackpadTapHoldMs(String value) {
+        return parseClampedInt(value, DEFAULT_TRACKPAD_TAP_HOLD_MS,
+                MIN_TRACKPAD_TAP_HOLD_MS, MAX_TRACKPAD_TAP_HOLD_MS);
+    }
+
+    public static double parseTrackpadSmoothingTimeConstant(String value) {
+        return parseClampedDouble(value, DEFAULT_TRACKPAD_SMOOTHING_TIME_CONSTANT,
+                MIN_TRACKPAD_SMOOTHING_TIME_CONSTANT, MAX_TRACKPAD_SMOOTHING_TIME_CONSTANT);
+    }
+
+    public static double parseTrackpadMaxVelocity(String value) {
+        return parseClampedDouble(value, DEFAULT_TRACKPAD_MAX_VELOCITY,
+                MIN_TRACKPAD_MAX_VELOCITY, MAX_TRACKPAD_MAX_VELOCITY);
+    }
+
+    public static double parseTrackpadMaxAcceleration(String value) {
+        return parseClampedDouble(value, DEFAULT_TRACKPAD_MAX_ACCELERATION,
+                MIN_TRACKPAD_MAX_ACCELERATION, MAX_TRACKPAD_MAX_ACCELERATION);
+    }
+
+    public static double parseTrackpadGlideDeceleration(String value) {
+        return parseClampedDouble(value, DEFAULT_TRACKPAD_GLIDE_DECELERATION,
+                MIN_TRACKPAD_GLIDE_DECELERATION, MAX_TRACKPAD_GLIDE_DECELERATION);
     }
 
     public static PreferenceConfiguration readPreferences(Context context, SharedPreferences prefs) {
@@ -1131,6 +1237,24 @@ private static int getFramePacingValue(Context context) {
                 getStringPreference(prefs, SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING));
         config.slideButtonLrLongPressMs = parseSlideButtonLrLongPressMs(
                 getStringPreference(prefs, SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING));
+        config.trackpadLinearSpeedMultiplier = parseTrackpadLinearSpeedMultiplier(
+                getStringPreference(prefs, TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING));
+        config.trackpadTapDurationMaxMs = parseTrackpadTapDurationMaxMs(
+                getStringPreference(prefs, TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING));
+        config.trackpadDoubleTapIntervalMs = parseTrackpadDoubleTapIntervalMs(
+                getStringPreference(prefs, TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING));
+        config.trackpadTapMovementThresholdPx = parseTrackpadTapMovementThresholdPx(
+                getStringPreference(prefs, TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING));
+        config.trackpadTapHoldMs = parseTrackpadTapHoldMs(
+                getStringPreference(prefs, TRACKPAD_TAP_HOLD_MS_PREF_STRING));
+        config.trackpadSmoothingTimeConstant = parseTrackpadSmoothingTimeConstant(
+                getStringPreference(prefs, TRACKPAD_SMOOTHING_TIME_CONSTANT_PREF_STRING));
+        config.trackpadMaxVelocity = parseTrackpadMaxVelocity(
+                getStringPreference(prefs, TRACKPAD_MAX_VELOCITY_PREF_STRING));
+        config.trackpadMaxAcceleration = parseTrackpadMaxAcceleration(
+                getStringPreference(prefs, TRACKPAD_MAX_ACCELERATION_PREF_STRING));
+        config.trackpadGlideDeceleration = parseTrackpadGlideDeceleration(
+                getStringPreference(prefs, TRACKPAD_GLIDE_DECELERATION_PREF_STRING));
 
         config.touchPadSensitivity=prefs.getInt("seekbar_touchpad_sensitivity_opacity",100);
 

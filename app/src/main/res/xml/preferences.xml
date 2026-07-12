@@ -974,6 +974,76 @@
             seekbar:min="10"
             seekbar:step="10" />
 
+        <PreferenceCategory
+            android:key="category_trackpad_context_parameters"
+            android:title="@string/title_trackpad_context_parameters"
+            app:iconSpaceReserved="false">
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_linear_speed_multiplier_range"
+                android:key="trackpadLinearSpeedMultiplier"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_linear_speed_multiplier"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_tap_duration_max_range"
+                android:key="trackpadTapDurationMaxMs"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_tap_duration_max"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_double_tap_interval_range"
+                android:key="trackpadDoubleTapIntervalMs"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_double_tap_interval"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_tap_movement_threshold_range"
+                android:key="trackpadTapMovementThresholdPx"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_tap_movement_threshold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_tap_hold_range"
+                android:key="trackpadTapHoldMs"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_tap_hold"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_smoothing_time_constant_range"
+                android:key="trackpadSmoothingTimeConstant"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_smoothing_time_constant"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_max_velocity_range"
+                android:key="trackpadMaxVelocity"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_max_velocity"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_acceleration_range"
+                android:key="trackpadMaxAcceleration"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_max_acceleration"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_acceleration_range"
+                android:key="trackpadGlideDeceleration"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_glide_deceleration"
+                app:iconSpaceReserved="false" />
+
+        </PreferenceCategory>
+
     </PreferenceCategory>
 
     <PreferenceCategory
