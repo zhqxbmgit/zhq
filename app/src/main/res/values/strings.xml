@@ -482,6 +482,15 @@
     <string name="summary_vibrate_keyboard">When you click the screen button, it will trigger the phone motor vibration. This option can also be used for virtual gamepad buttons.</string>
     <string name="title_square_buttons">Normal buttons are square buttons</string>
     <string name="summary_square_buttons">Virtual button shapes are square buttons, by default they are round.</string>
+    <string name="title_slide_button_up_threshold">Upward slide trigger threshold</string>
+    <string name="title_slide_button_down_threshold">Downward slide trigger threshold</string>
+    <string name="title_slide_button_tap_hold">Tap hold duration</string>
+    <string name="title_slide_button_long_press">Long press detection time</string>
+    <string name="dialog_slide_button_threshold_range">Allowed range: 0.1–50.0 dp</string>
+    <string name="dialog_slide_button_tap_hold_range">Allowed range: 1–200 ms</string>
+    <string name="dialog_slide_button_long_press_range">Allowed range: 50–2000 ms</string>
+    <string name="summary_slide_button_value_dp">%1$s dp</string>
+    <string name="summary_slide_button_value_ms">%1$d ms</string>
     <string name="title_reset_keyboard_layout">Reset virtual keyboard layout</string>
     <string name="summary_reset_keyboard_layout">Initialize the special key layout (reset the default selected layout scheme)</string>
     <string name="title_joyconfix">Compatible with Switch JoyCon</string>

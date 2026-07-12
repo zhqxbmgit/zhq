@@ -33,6 +33,10 @@ public class PreferenceConfiguration {
     public static final String CUSTOM_BITRATE_PREF_STRING = "edit_diy_bitrate";
     public static final String CUSTOM_REFRESH_RATE_PREF_STRING = "custom_refresh_rate";
     public static final String CUSTOM_RESOLUTION_PREF_STRING = "edit_diy_w_h";
+    public static final String SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING = "slideButtonUpThresholdDp";
+    public static final String SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING = "slideButtonDownThresholdDp";
+    public static final String SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING = "slideButtonTapHoldMs";
+    public static final String SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING = "slideButtonLongPressMs";
 
     private static final String LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps";
     private static final String LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround";
@@ -216,6 +220,18 @@ public class PreferenceConfiguration {
     private static final float DEFAULT_PAN_OFFSET = 0.0f;
     private static final boolean DEFAULT_FULL_SCREEN = true;
 
+    public static final float DEFAULT_SLIDE_BUTTON_UP_THRESHOLD_DP = 0.7f;
+    public static final float DEFAULT_SLIDE_BUTTON_DOWN_THRESHOLD_DP = 3.0f;
+    public static final int DEFAULT_SLIDE_BUTTON_TAP_HOLD_MS = 25;
+    public static final int DEFAULT_SLIDE_BUTTON_LONG_PRESS_MS = 400;
+
+    private static final float MIN_SLIDE_BUTTON_THRESHOLD_DP = 0.1f;
+    private static final float MAX_SLIDE_BUTTON_THRESHOLD_DP = 50.0f;
+    private static final int MIN_SLIDE_BUTTON_TAP_HOLD_MS = 1;
+    private static final int MAX_SLIDE_BUTTON_TAP_HOLD_MS = 200;
+    private static final int MIN_SLIDE_BUTTON_LONG_PRESS_MS = 50;
+    private static final int MAX_SLIDE_BUTTON_LONG_PRESS_MS = 2000;
+
     public static final int FRAME_PACING_MIN_LATENCY = 0;
     public static final int FRAME_PACING_BALANCED = 1;
     public static final int FRAME_PACING_CAP_FPS = 2;
@@ -342,6 +358,11 @@ public class PreferenceConfiguration {
     public boolean enableKeyboardVibrate;
 
     public boolean enableKeyboardSquare;
+
+    public float slideButtonUpThresholdDp;
+    public float slideButtonDownThresholdDp;
+    public int slideButtonTapHoldMs;
+    public int slideButtonLongPressMs;
 
     //官方虚拟按钮风格
     public boolean enableOnScreenStyleOfficial;
@@ -716,6 +737,63 @@ private static int getFramePacingValue(Context context) {
         return readPreferences(context, null);
     }
 
+    private static float parseClampedFloat(String value, float defaultValue, float minValue, float maxValue) {
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+
+        try {
+            float parsedValue = Float.parseFloat(value.trim());
+            if (Float.isNaN(parsedValue) || Float.isInfinite(parsedValue)) {
+                return defaultValue;
+            }
+            return Math.max(minValue, Math.min(maxValue, parsedValue));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private static int parseClampedInt(String value, int defaultValue, int minValue, int maxValue) {
+        if (value == null || value.trim().isEmpty()) {
+            return defaultValue;
+        }
+
+        try {
+            int parsedValue = Integer.parseInt(value.trim());
+            return Math.max(minValue, Math.min(maxValue, parsedValue));
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private static String getStringPreference(SharedPreferences prefs, String key) {
+        try {
+            return prefs.getString(key, null);
+        } catch (ClassCastException e) {
+            return null;
+        }
+    }
+
+    public static float parseSlideButtonUpThresholdDp(String value) {
+        return parseClampedFloat(value, DEFAULT_SLIDE_BUTTON_UP_THRESHOLD_DP,
+                MIN_SLIDE_BUTTON_THRESHOLD_DP, MAX_SLIDE_BUTTON_THRESHOLD_DP);
+    }
+
+    public static float parseSlideButtonDownThresholdDp(String value) {
+        return parseClampedFloat(value, DEFAULT_SLIDE_BUTTON_DOWN_THRESHOLD_DP,
+                MIN_SLIDE_BUTTON_THRESHOLD_DP, MAX_SLIDE_BUTTON_THRESHOLD_DP);
+    }
+
+    public static int parseSlideButtonTapHoldMs(String value) {
+        return parseClampedInt(value, DEFAULT_SLIDE_BUTTON_TAP_HOLD_MS,
+                MIN_SLIDE_BUTTON_TAP_HOLD_MS, MAX_SLIDE_BUTTON_TAP_HOLD_MS);
+    }
+
+    public static int parseSlideButtonLongPressMs(String value) {
+        return parseClampedInt(value, DEFAULT_SLIDE_BUTTON_LONG_PRESS_MS,
+                MIN_SLIDE_BUTTON_LONG_PRESS_MS, MAX_SLIDE_BUTTON_LONG_PRESS_MS);
+    }
+
     public static PreferenceConfiguration readPreferences(Context context, SharedPreferences prefs) {
         if (prefs == null) {
             prefs = ProfilesManager.getInstance().getOverlayingSharedPreferences(context);
@@ -994,6 +1072,15 @@ private static int getFramePacingValue(Context context) {
         config.enableCommitText = prefs.getBoolean(CHECKBOX_ENABLE_COMMIT_TEXT, DEFAULT_ENABLE_COMMIT_TEXT);
 
         config.enableKeyboardSquare=prefs.getBoolean("checkbox_enable_keyboard_square",false);
+
+        config.slideButtonUpThresholdDp = parseSlideButtonUpThresholdDp(
+                getStringPreference(prefs, SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING));
+        config.slideButtonDownThresholdDp = parseSlideButtonDownThresholdDp(
+                getStringPreference(prefs, SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING));
+        config.slideButtonTapHoldMs = parseSlideButtonTapHoldMs(
+                getStringPreference(prefs, SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING));
+        config.slideButtonLongPressMs = parseSlideButtonLongPressMs(
+                getStringPreference(prefs, SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING));
 
         config.touchPadSensitivity=prefs.getInt("seekbar_touchpad_sensitivity_opacity",100);
 

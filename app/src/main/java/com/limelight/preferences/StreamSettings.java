@@ -176,6 +176,68 @@ public class StreamSettings extends AppCompatActivity {
             return getPreferenceManager().getSharedPreferences();
         }
 
+        private String normalizeSlideButtonPreferenceValue(String key, String value) {
+            switch (key) {
+                case PreferenceConfiguration.SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING:
+                    return Float.toString(PreferenceConfiguration.parseSlideButtonUpThresholdDp(value));
+                case PreferenceConfiguration.SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING:
+                    return Float.toString(PreferenceConfiguration.parseSlideButtonDownThresholdDp(value));
+                case PreferenceConfiguration.SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING:
+                    return Integer.toString(PreferenceConfiguration.parseSlideButtonTapHoldMs(value));
+                case PreferenceConfiguration.SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING:
+                    return Integer.toString(PreferenceConfiguration.parseSlideButtonLongPressMs(value));
+                default:
+                    throw new IllegalArgumentException("Unknown SlideButton preference key: " + key);
+            }
+        }
+
+        private CharSequence getSlideButtonPreferenceSummary(String key) {
+            PreferenceConfiguration config = PreferenceConfiguration.readPreferences(requireContext());
+            switch (key) {
+                case PreferenceConfiguration.SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING:
+                    return getString(R.string.summary_slide_button_value_dp,
+                            Float.toString(config.slideButtonUpThresholdDp));
+                case PreferenceConfiguration.SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING:
+                    return getString(R.string.summary_slide_button_value_dp,
+                            Float.toString(config.slideButtonDownThresholdDp));
+                case PreferenceConfiguration.SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING:
+                    return getString(R.string.summary_slide_button_value_ms, config.slideButtonTapHoldMs);
+                case PreferenceConfiguration.SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING:
+                    return getString(R.string.summary_slide_button_value_ms, config.slideButtonLongPressMs);
+                default:
+                    throw new IllegalArgumentException("Unknown SlideButton preference key: " + key);
+            }
+        }
+
+        private void configureSlideButtonNumericPreference(String key, boolean allowDecimal) {
+            EditTextPreference preference = findPreference(key);
+            if (preference == null) {
+                return;
+            }
+
+            preference.setDefaultValue(normalizeSlideButtonPreferenceValue(key, null));
+            String normalizedValue = normalizeSlideButtonPreferenceValue(key, preference.getText());
+            if (!normalizedValue.equals(preference.getText())) {
+                preference.setText(normalizedValue);
+            }
+
+            preference.setOnBindEditTextListener(editText -> {
+                int inputType = InputType.TYPE_CLASS_NUMBER;
+                if (allowDecimal) {
+                    inputType |= InputType.TYPE_NUMBER_FLAG_DECIMAL;
+                }
+                editText.setInputType(inputType);
+                editText.setSelectAllOnFocus(true);
+            });
+            preference.setSummaryProvider(ignored -> getSlideButtonPreferenceSummary(key));
+            preference.setOnPreferenceChangeListener((changedPreference, newValue) -> {
+                String normalizedNewValue = normalizeSlideButtonPreferenceValue(key,
+                        newValue == null ? null : newValue.toString());
+                ((EditTextPreference) changedPreference).setText(normalizedNewValue);
+                return false;
+            });
+        }
+
         private void setValue(String preferenceKey, String value) {
             ListPreference pref = (ListPreference) findPreference(preferenceKey);
 
@@ -336,6 +398,15 @@ public class StreamSettings extends AppCompatActivity {
         public void initializePreferences() {
             addPreferencesFromResource(R.xml.preferences);
             PreferenceScreen screen = getPreferenceScreen();
+
+            configureSlideButtonNumericPreference(
+                    PreferenceConfiguration.SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING, true);
+            configureSlideButtonNumericPreference(
+                    PreferenceConfiguration.SLIDE_BUTTON_DOWN_THRESHOLD_DP_PREF_STRING, true);
+            configureSlideButtonNumericPreference(
+                    PreferenceConfiguration.SLIDE_BUTTON_TAP_HOLD_MS_PREF_STRING, false);
+            configureSlideButtonNumericPreference(
+                    PreferenceConfiguration.SLIDE_BUTTON_LONG_PRESS_MS_PREF_STRING, false);
 
             AppCompatActivity activity = (AppCompatActivity) requireActivity();
             PackageManager pm = activity.getPackageManager();

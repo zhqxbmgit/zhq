@@ -798,6 +798,34 @@
             android:title="@string/title_square_buttons"
             app:iconSpaceReserved="false" />
 
+        <EditTextPreference
+            android:dialogMessage="@string/dialog_slide_button_threshold_range"
+            android:key="slideButtonUpThresholdDp"
+            android:singleLine="true"
+            android:title="@string/title_slide_button_up_threshold"
+            app:iconSpaceReserved="false" />
+
+        <EditTextPreference
+            android:dialogMessage="@string/dialog_slide_button_threshold_range"
+            android:key="slideButtonDownThresholdDp"
+            android:singleLine="true"
+            android:title="@string/title_slide_button_down_threshold"
+            app:iconSpaceReserved="false" />
+
+        <EditTextPreference
+            android:dialogMessage="@string/dialog_slide_button_tap_hold_range"
+            android:key="slideButtonTapHoldMs"
+            android:singleLine="true"
+            android:title="@string/title_slide_button_tap_hold"
+            app:iconSpaceReserved="false" />
+
+        <EditTextPreference
+            android:dialogMessage="@string/dialog_slide_button_long_press_range"
+            android:key="slideButtonLongPressMs"
+            android:singleLine="true"
+            android:title="@string/title_slide_button_long_press"
+            app:iconSpaceReserved="false" />
+
         <com.limelight.preferences.ConfirmDeleteKeyboardPreference
             android:dependency="checkbox_enable_keyboard"
             android:dialogMessage="@string/dialog_text_reset_osc"
