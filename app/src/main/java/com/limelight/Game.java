@@ -182,6 +182,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     private int displayWidth;
     private int displayHeight;
+    // Stream-resolution orientation state. The Activity itself is always portrait.
     private int currentOrientation;
 
     public NvConnection conn;
@@ -415,7 +416,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             prefConfig.showOverlayZoomToggleButton = false;
             prefConfig.enablePip = false;
             currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
+            setPreferredOrientationForActivity();
         } else {
             if (prefConfig.renderMode != 0) {
                 prefConfig.videoScaleMode = PreferenceConfiguration.ScaleMode.STRETCH;
@@ -433,7 +434,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             displayWidth = shouldInvertDecoderResolution ? prefConfig.height : prefConfig.width;
             displayHeight = shouldInvertDecoderResolution ? prefConfig.width : prefConfig.height;
 
-            // Enter landscape unless we're on a square screen
+            // Keep the Activity portrait without changing stream-resolution orientation logic
             setPreferredOrientationForActivity();
         }
 
@@ -1155,53 +1156,14 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     private void setPreferredOrientationForActivity() {
-        Display display = getActiveDisplay(Game.this, prefConfig);
-
-        // For semi-square displays, we use more complex logic to determine which orientation to use (if any)
-        if (PreferenceConfiguration.isSquarishScreen(display)) {
-            int desiredOrientation = Configuration.ORIENTATION_UNDEFINED;
-
-            // OSC doesn't properly support portrait displays, so don't use it in portrait mode by default
-            if (prefConfig.onscreenController) {
-                desiredOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            }
-
-            // For native resolution, we will lock the orientation to the one that matches the specified resolution
-            if (PreferenceConfiguration.isNativeResolution(prefConfig.width, prefConfig.height)) {
-                if (displayWidth > displayHeight) {
-                    desiredOrientation = Configuration.ORIENTATION_LANDSCAPE;
-                }
-                else {
-                    desiredOrientation = Configuration.ORIENTATION_PORTRAIT;
-                }
-            }
-
-            if (desiredOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
-            }
-            else if (desiredOrientation == Configuration.ORIENTATION_PORTRAIT) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
-            }
-            else {
-                // If we don't have a reason to lock to portrait or landscape, allow any orientation
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
-            }
-        }
-        else {
-            // Lock to current orientation
-            if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
-            } else {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
-            }
-        }
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        // Set requested orientation for possible new screen size
+        // Reassert the fixed Activity orientation after configuration changes
         setPreferredOrientationForActivity();
 
         if (virtualController != null) {
@@ -4013,13 +3975,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void rotateScreen() {
-        if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-            currentOrientation = Configuration.ORIENTATION_PORTRAIT;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
-        } else {
-            currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
-        }
+        setPreferredOrientationForActivity();
     }
 
     /**

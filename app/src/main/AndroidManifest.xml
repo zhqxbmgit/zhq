@@ -89,6 +89,7 @@
 
         <activity
             android:name=".PcView"
+            android:screenOrientation="portrait"
             android:exported="true"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
@@ -129,6 +130,7 @@
         </activity>
         <activity
             android:name=".AppView"
+            android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection">
@@ -137,6 +139,7 @@
         </activity>
         <activity
             android:name=".ProfilesActivity"
+            android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
@@ -146,6 +149,7 @@
         </activity>
         <activity
             android:name=".EditProfileActivity"
+            android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
@@ -155,6 +159,7 @@
             <meta-data android:name="WindowManagerPreference:FreeformWindowOrientation" android:value="landscape" />
         </activity>
         <activity android:name=".utils.ExternalDisplayControlActivity"
+            android:screenOrientation="portrait"
             android:exported="false"
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
             android:excludeFromRecents="true"
@@ -163,6 +168,7 @@
             android:theme="@style/ExternalDisplayControllerTheme"/>
         <activity
             android:name=".preferences.StreamSettings"
+            android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
@@ -174,6 +180,7 @@
         </activity>
         <activity
             android:name=".preferences.AddComputerManually"
+            android:screenOrientation="portrait"
             android:exported="true"
             android:resizeableActivity="true"
             android:windowSoftInputMode="stateVisible"
@@ -192,6 +199,7 @@
         </activity>
         <activity
             android:name=".Game"
+            android:screenOrientation="portrait"
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
             android:noHistory="true"
             android:supportsPictureInPicture="true"
@@ -227,6 +235,7 @@
 
         <activity
             android:name=".HelpActivity"
+            android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:enableOnBackInvokedCallback="true"
             android:configChanges="mcc|mnc|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection">
@@ -236,6 +245,7 @@
 
 
         <activity android:name=".DebugInfoActivity"
+            android:screenOrientation="portrait"
             android:launchMode="singleTask"/>
 
         <!-- 无障碍 实体键盘 屏蔽某些快捷键 -->
