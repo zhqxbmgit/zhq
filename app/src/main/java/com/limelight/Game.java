@@ -188,11 +188,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public NvConnection conn;
     private SpinnerDialog spinner;
     private boolean displayedFailureDialog = false;
-    private boolean connecting = false;
     public boolean connected = false;
     private boolean autoEnterPip = false;
     private boolean surfaceCreated = false;
     private boolean attemptedConnection = false;
+    private volatile boolean stopRequested = false;
     private int suppressPipRefCount = 0;
     private String pcName;
     private String appName;
@@ -868,7 +868,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         //streamContainer.getHolder().addCallback(this);
 
         streamContainer.setOnSurfaceAvailable(() -> {
-            if (!attemptedConnection) {
+            if (!attemptedConnection && !stopRequested) {
                 LimeLog.info("Surface is available, starting connection...");
                 attemptedConnection = true;
 
@@ -1675,6 +1675,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     protected void onDestroy() {
+        // onStop() normally requests cancellation first, but keep an idempotent final
+        // lifecycle backstop so a started connection can never outlive this Activity.
+        stopConnection();
         super.onDestroy();
 
         instance = null;
@@ -3396,6 +3399,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
                 if (spinner != null) {
                     spinner.setMessage(getResources().getString(R.string.conn_starting) + " " + stage);
                 }
@@ -3407,52 +3413,85 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public void stageComplete(String stage) {
     }
 
+    private boolean shouldIgnoreConnectionCallback() {
+        return stopRequested || isFinishing() || isDestroyed();
+    }
+
     private void stopConnection() {
-        if (connecting || connected) {
-            connecting = connected = false;
-            updatePipAutoEnter();
+        if (stopRequested) {
+            return;
+        }
 
-            controllerHandler.stop();
+        stopRequested = true;
 
+        if (!attemptedConnection || conn == null) {
+            return;
+        }
+
+        boolean wasConnected = connected;
+        connected = false;
+        updatePipAutoEnter();
+
+        controllerHandler.stop();
+
+        if (wasConnected) {
             // Update GameManager state to indicate we're no longer in game
             UiHelper.notifyStreamEnded(this);
+        }
 
-            // Stop may take a few hundred ms to do some network I/O to tell
-            // the server we're going away and clean up. Let it run in a separate
-            // thread to keep things smooth for the UI. Inside moonlight-common,
-            // we prevent another thread from starting a connection before and
-            // during the process of stopping this one.
-            new Thread() {
-                public void run() {
-                    conn.stop();
-                    if (httpConn != null && quitOnStop) {
-                        try {
-                            sleep(1000);
-                            httpConn.quitApp();
-                            Game.this.runOnUiThread(() -> Toast.makeText(Game.this, Game.this.getResources().getString(R.string.applist_quit_success) + " " + appName, Toast.LENGTH_LONG).show());
-                        } catch (Exception e) {
-                            Game.this.runOnUiThread(() -> Toast.makeText(Game.this, e.getMessage(), Toast.LENGTH_LONG).show());
-                        }
+        // Make cancellation visible synchronously before finish/onDestroy and before
+        // any already queued connectionStarted() UI work can run.
+        conn.requestStop();
+
+        // Stop may take a few hundred ms to do some network I/O to tell
+        // the server we're going away and clean up. Let it run in a separate
+        // thread to keep things smooth for the UI. Inside moonlight-common,
+        // we prevent another thread from starting a connection before and
+        // during the process of stopping this one.
+        new Thread() {
+            public void run() {
+                conn.stop();
+                if (httpConn != null && quitOnStop) {
+                    try {
+                        sleep(1000);
+                        httpConn.quitApp();
+                        Game.this.runOnUiThread(() -> Toast.makeText(Game.this, Game.this.getResources().getString(R.string.applist_quit_success) + " " + appName, Toast.LENGTH_LONG).show());
+                    } catch (Exception e) {
+                        Game.this.runOnUiThread(() -> Toast.makeText(Game.this, e.getMessage(), Toast.LENGTH_LONG).show());
                     }
                 }
-            }.start();
-        }
+            }
+        }.start();
     }
 
     @Override
     public boolean stageFailed(final String stage, final int portFlags, final int errorCode) {
+        if (shouldIgnoreConnectionCallback()) {
+            return false;
+        }
+
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portTestResult = MoonBridge.testClientConnectivity(ServerHelper.CONNECTION_TEST_SERVER, 443, portFlags);
 
+        if (shouldIgnoreConnectionCallback()) {
+            return false;
+        }
+
         if (errorCode == 0 && portFlags != 0 && (portTestResult == MoonBridge.ML_TEST_RESULT_INCONCLUSIVE || portTestResult == 0)) {
-            spinner.setMessage(getResources().getString(R.string.unlocking_or_starting));
+            if (spinner != null) {
+                spinner.setMessage(getResources().getString(R.string.unlocking_or_starting));
+            }
             return true;
         }
 
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
+
                 if (spinner != null) {
                     spinner.dismiss();
                     spinner = null;
@@ -3517,6 +3556,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionTerminated(final int errorCode) {
+        if (shouldIgnoreConnectionCallback()) {
+            return;
+        }
+
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);
@@ -3525,6 +3568,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
+
                 // Let the display go to sleep now
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -3604,6 +3651,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
+
                 if (prefConfig.disableWarnings) {
                     return;
                 }
@@ -3631,16 +3682,23 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionStarted() {
+        if (shouldIgnoreConnectionCallback()) {
+            return;
+        }
+
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
+
                 if (spinner != null) {
                     spinner.dismiss();
                     spinner = null;
                 }
 
                 connected = true;
-                connecting = false;
                 updatePipAutoEnter();
 
                 // Hide the mouse cursor now after a short delay.
@@ -3675,6 +3733,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             }
         });
 
+        if (shouldIgnoreConnectionCallback()) {
+            return;
+        }
+
         if (prefConfig.usbDriver) {
             // Start the USB driver
             bindService(new Intent(this, UsbDriverService.class),
@@ -3698,6 +3760,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                if (shouldIgnoreConnectionCallback()) {
+                    return;
+                }
                 Toast.makeText(Game.this, message, Toast.LENGTH_LONG).show();
             }
         });
@@ -3709,6 +3774,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    if (shouldIgnoreConnectionCallback()) {
+                        return;
+                    }
                     Toast.makeText(Game.this, message, Toast.LENGTH_LONG).show();
                 }
             });
@@ -3808,10 +3876,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         if (attemptedConnection) {
             // Let the decoder know immediately that the surface is gone
             decoderRenderer.prepareForStop();
-
-            if (connected) {
-                stopConnection();
-            }
+            stopConnection();
         }
     }
 

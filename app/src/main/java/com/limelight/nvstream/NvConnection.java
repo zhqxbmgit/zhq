@@ -25,6 +25,8 @@ import java.util.Objects;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -44,13 +46,36 @@ import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
 
 public class NvConnection {
+    private static final long CONNECTION_SEMAPHORE_POLL_MS = 200;
+    private static final int NATIVE_START_NOT_RETURNED = Integer.MIN_VALUE;
+
+    private enum ConnectionState {
+        NEW,
+        HTTP_STARTING,
+        WAITING_FOR_PERMIT,
+        NATIVE_STARTING,
+        CONNECTED,
+        STOPPING,
+        STOPPED
+    }
+
     // Context parameters
     private LimelightCryptoProvider cryptoProvider;
     private String uniqueId;
     private ConnectionContext context;
-    private static Semaphore connectionAllowed = new Semaphore(1);
+    private static final Semaphore connectionAllowed = new Semaphore(1);
     private final boolean isMonkey;
     private final Context appContext;
+    private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
+    private final AtomicBoolean permitHeld = new AtomicBoolean(false);
+    private final AtomicBoolean cleanupStarted = new AtomicBoolean(false);
+    private volatile ConnectionState connectionState = ConnectionState.NEW;
+    private volatile CancellationAwareConnectionListener guardedConnectionListener;
+
+    // These fields are accessed while holding MoonBridge.class.
+    private boolean bridgeSetup;
+    private boolean nativeStartInvoked;
+    private int nativeStartResult = NATIVE_START_NOT_RETURNED;
 
     public NvConnection(Context appContext, ComputerDetails.AddressTuple host, int httpsPort, String uniqueId, StreamConfiguration config, LimelightCryptoProvider cryptoProvider, X509Certificate serverCert)
     {
@@ -89,19 +114,188 @@ public class NvConnection {
         return new SecureRandom().nextInt();
     }
 
-    public void stop() {
-        // Interrupt any pending connection. This is thread-safe.
-        MoonBridge.interruptConnection();
-
-        // Moonlight-core is not thread-safe with respect to connection start and stop, so
-        // we must not invoke that functionality in parallel.
-        synchronized (MoonBridge.class) {
-            MoonBridge.stopConnection();
-            MoonBridge.cleanupBridge();
+    public void requestStop() {
+        if (!cancelRequested.compareAndSet(false, true)) {
+            return;
         }
 
-        // Now a pending connection can be processed
-        connectionAllowed.release();
+        CancellationAwareConnectionListener listener = guardedConnectionListener;
+        if (listener != null) {
+            listener.disable();
+        }
+
+        // Interrupt only if this instance owns the native connection slot. Connections
+        // still in HTTP or waiting for the semaphore must not affect another instance.
+        ConnectionState state = connectionState;
+        if (permitHeld.get() &&
+                (state == ConnectionState.NATIVE_STARTING || state == ConnectionState.CONNECTED)) {
+            MoonBridge.interruptConnection();
+        }
+    }
+
+    public void stop() {
+        requestStop();
+        cleanupOwnedConnection();
+    }
+
+    private void releasePermitIfHeld() {
+        if (permitHeld.compareAndSet(true, false)) {
+            connectionAllowed.release();
+        }
+    }
+
+    private void cleanupOwnedConnection() {
+        // If acquisition is racing with cancellation, the start thread will observe the
+        // cancellation immediately after recording ownership and perform the cleanup.
+        if (!permitHeld.get() || !cleanupStarted.compareAndSet(false, true)) {
+            return;
+        }
+
+        connectionState = ConnectionState.STOPPING;
+
+        // Moonlight-core and MoonBridge's static listener/renderer fields are global. Keep
+        // cleanup and permit release in the same monitor so the next owner cannot install
+        // its bridge state until this instance has completely finished.
+        synchronized (MoonBridge.class) {
+            if (bridgeSetup) {
+                // A non-zero native result already runs LiStopConnection() internally.
+                if (nativeStartInvoked && nativeStartResult == 0) {
+                    MoonBridge.stopConnection();
+                }
+                MoonBridge.cleanupBridge();
+                bridgeSetup = false;
+            }
+
+            releasePermitIfHeld();
+        }
+
+        connectionState = ConnectionState.STOPPED;
+
+        CancellationAwareConnectionListener listener = guardedConnectionListener;
+        if (listener != null) {
+            listener.disable();
+        }
+    }
+
+    private final class CancellationAwareConnectionListener implements NvConnectionListener {
+        private volatile NvConnectionListener delegate;
+
+        CancellationAwareConnectionListener(NvConnectionListener delegate) {
+            this.delegate = delegate;
+        }
+
+        void disable() {
+            delegate = null;
+        }
+
+        private NvConnectionListener getDelegate() {
+            if (cancelRequested.get()) {
+                return null;
+            }
+            return delegate;
+        }
+
+        @Override
+        public void stageStarting(String stage) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.stageStarting(stage);
+            }
+        }
+
+        @Override
+        public void stageComplete(String stage) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.stageComplete(stage);
+            }
+        }
+
+        @Override
+        public boolean stageFailed(String stage, int portFlags, int errorCode) {
+            NvConnectionListener listener = getDelegate();
+            return listener != null && listener.stageFailed(stage, portFlags, errorCode);
+        }
+
+        @Override
+        public void connectionStarted() {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.connectionStarted();
+            }
+        }
+
+        @Override
+        public void connectionTerminated(int errorCode) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.connectionTerminated(errorCode);
+            }
+        }
+
+        @Override
+        public void connectionStatusUpdate(int connectionStatus) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.connectionStatusUpdate(connectionStatus);
+            }
+        }
+
+        @Override
+        public void displayMessage(String message) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.displayMessage(message);
+            }
+        }
+
+        @Override
+        public void displayTransientMessage(String message) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.displayTransientMessage(message);
+            }
+        }
+
+        @Override
+        public void rumble(short controllerNumber, short lowFreqMotor, short highFreqMotor) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.rumble(controllerNumber, lowFreqMotor, highFreqMotor);
+            }
+        }
+
+        @Override
+        public void rumbleTriggers(short controllerNumber, short leftTrigger, short rightTrigger) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.rumbleTriggers(controllerNumber, leftTrigger, rightTrigger);
+            }
+        }
+
+        @Override
+        public void setHdrMode(boolean enabled, byte[] hdrMetadata) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.setHdrMode(enabled, hdrMetadata);
+            }
+        }
+
+        @Override
+        public void setMotionEventState(short controllerNumber, byte motionType, short reportRateHz) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.setMotionEventState(controllerNumber, motionType, reportRateHz);
+            }
+        }
+
+        @Override
+        public void setControllerLED(short controllerNumber, byte r, byte g, byte b) {
+            NvConnectionListener listener = getDelegate();
+            if (listener != null) {
+                listener.setControllerLED(controllerNumber, r, g, b);
+            }
+        }
     }
 
     private InetAddress resolveServerAddress() throws IOException {
@@ -389,7 +583,18 @@ public class NvConnection {
     {
         new Thread(new Runnable() {
             public void run() {
-                context.connListener = connectionListener;
+                CancellationAwareConnectionListener listener = new CancellationAwareConnectionListener(connectionListener);
+                guardedConnectionListener = listener;
+                context.connListener = listener;
+
+                // requestStop() may have been called before this thread was scheduled.
+                if (cancelRequested.get()) {
+                    listener.disable();
+                    connectionState = ConnectionState.STOPPED;
+                    return;
+                }
+
+                connectionState = ConnectionState.HTTP_STARTING;
                 context.videoCapabilities = videoDecoderRenderer.getCapabilities();
 
                 String appName = context.streamConfig.getApp().getAppName();
@@ -401,25 +606,64 @@ public class NvConnection {
                 do {
                     boolean retry = false;
                     try {
-                        if (!startApp()) {
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
+
+                        boolean appStarted = startApp();
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
+
+                        if (!appStarted) {
                             retry = context.connListener.stageFailed(appName, 0, 0);
+                            if (cancelRequested.get()) {
+                                connectionState = ConnectionState.STOPPED;
+                                return;
+                            }
                             if (!retry) {
+                                connectionState = ConnectionState.STOPPED;
                                 return;
                             }
                         }
+
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
                         context.connListener.stageComplete(appName);
                     } catch (HostHttpResponseException e) {
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
                         e.printStackTrace();
                         context.connListener.displayMessage(e.getMessage());
                         retry = context.connListener.stageFailed(appName, 0, e.getErrorCode());
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
                         if (!retry) {
+                            connectionState = ConnectionState.STOPPED;
                             return;
                         }
                     } catch (XmlPullParserException | IOException e) {
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
                         e.printStackTrace();
                         context.connListener.displayMessage(e.getMessage());
                         retry = context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, tryCount < 2 ? 0 : -408);
+                        if (cancelRequested.get()) {
+                            connectionState = ConnectionState.STOPPED;
+                            return;
+                        }
                         if (!retry) {
+                            connectionState = ConnectionState.STOPPED;
                             return;
                         }
                     }
@@ -430,12 +674,27 @@ public class NvConnection {
                     try {
                         sleep(2000);
                     } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
+                        Thread.currentThread().interrupt();
+                        connectionState = ConnectionState.STOPPED;
+                        return;
+                    }
+
+                    if (cancelRequested.get()) {
+                        connectionState = ConnectionState.STOPPED;
+                        return;
                     }
                 } while (tryCount < 5);
 
                 if (tryCount >= 5) {
-                    context.connListener.stageFailed(appName, 0, -408);
+                    if (!cancelRequested.get()) {
+                        context.connListener.stageFailed(appName, 0, -408);
+                    }
+                    connectionState = ConnectionState.STOPPED;
+                    return;
+                }
+
+                if (cancelRequested.get()) {
+                    connectionState = ConnectionState.STOPPED;
                     return;
                 }
 
@@ -443,20 +702,67 @@ public class NvConnection {
                 ib.putInt(context.riKeyId);
 
                 // Acquire the connection semaphore to ensure we only have one
-                // connection going at once.
-                try {
-                    connectionAllowed.acquire();
-                } catch (InterruptedException e) {
-                    context.connListener.displayMessage(e.getMessage());
-                    context.connListener.stageFailed(appName, 0, 0);
+                // connection going at once. Poll with a bounded timeout so a cancelled
+                // instance never remains blocked behind another connection indefinitely.
+                connectionState = ConnectionState.WAITING_FOR_PERMIT;
+                while (!cancelRequested.get() && !permitHeld.get()) {
+                    try {
+                        if (connectionAllowed.tryAcquire(CONNECTION_SEMAPHORE_POLL_MS, TimeUnit.MILLISECONDS)) {
+                            permitHeld.set(true);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        if (!cancelRequested.get()) {
+                            context.connListener.displayMessage(e.getMessage());
+                            context.connListener.stageFailed(appName, 0, 0);
+                        }
+                        connectionState = ConnectionState.STOPPED;
+                        return;
+                    }
+                }
+
+                if (!permitHeld.get()) {
+                    connectionState = ConnectionState.STOPPED;
                     return;
                 }
+
+                if (cancelRequested.get()) {
+                    cleanupOwnedConnection();
+                    return;
+                }
+
+                connectionState = ConnectionState.NATIVE_STARTING;
 
                 // Moonlight-core is not thread-safe with respect to connection start and stop, so
                 // we must not invoke that functionality in parallel.
                 synchronized (MoonBridge.class) {
-                    MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
-                    int ret = MoonBridge.startConnection(context.serverAddress.address,
+                    if (cancelRequested.get()) {
+                        cleanupOwnedConnection();
+                        return;
+                    }
+
+                    // Check again immediately before installing global MoonBridge state.
+                    if (cancelRequested.get()) {
+                        cleanupOwnedConnection();
+                        return;
+                    }
+                    MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, listener);
+                    bridgeSetup = true;
+
+                    // setupBridge() and startConnection() are separate operations. Cancellation
+                    // in this window must clean up the installed bridge without entering native.
+                    if (cancelRequested.get()) {
+                        cleanupOwnedConnection();
+                        return;
+                    }
+
+                    nativeStartInvoked = true;
+                    if (cancelRequested.get()) {
+                        cleanupOwnedConnection();
+                        return;
+                    }
+
+                    nativeStartResult = MoonBridge.startConnection(context.serverAddress.address,
                             context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
                             context.serverCodecModeSupport,
                             context.negotiatedWidth, context.negotiatedHeight,
@@ -469,13 +775,20 @@ public class NvConnection {
                             context.videoCapabilities,
                             context.streamConfig.getColorSpace(),
                             context.streamConfig.getColorRange());
-                    if (ret != 0) {
-                        // LiStartConnection() failed, so the caller is not expected
-                        // to stop the connection themselves. We need to release their
-                        // semaphore count for them.
-                        connectionAllowed.release();
+
+                    if (cancelRequested.get()) {
+                        cleanupOwnedConnection();
                         return;
                     }
+
+                    if (nativeStartResult != 0) {
+                        // LiStartConnection() performs native cleanup before returning an error.
+                        // We still own MoonBridge's Java bridge fields and the semaphore permit.
+                        cleanupOwnedConnection();
+                        return;
+                    }
+
+                    connectionState = ConnectionState.CONNECTED;
                 }
             }
         }).start();
