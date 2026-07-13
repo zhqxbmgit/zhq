@@ -132,6 +132,8 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import android.view.SurfaceView;
 import android.view.ViewGroup;
 
@@ -143,6 +145,27 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
     public static Game instance;
     public static boolean terminatedByUser = false;
+
+    public static final class FatalTerminationEvent {
+        private final String computerUuid;
+        private final int appId;
+
+        private FatalTerminationEvent(String computerUuid, int appId) {
+            this.computerUuid = computerUuid;
+            this.appId = appId;
+        }
+
+        public String getComputerUuid() {
+            return computerUuid;
+        }
+
+        public int getAppId() {
+            return appId;
+        }
+    }
+
+    private static final AtomicReference<FatalTerminationEvent> pendingFatalTermination =
+            new AtomicReference<>();
 
     private int lastButtonState = 0;
 
@@ -188,6 +211,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public NvConnection conn;
     private SpinnerDialog spinner;
     private boolean displayedFailureDialog = false;
+    private final AtomicBoolean fatalTerminationPublished = new AtomicBoolean(false);
     public boolean connected = false;
     private boolean autoEnterPip = false;
     private boolean surfaceCreated = false;
@@ -338,6 +362,44 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             MoonBridge.sendEmptyPayload();
         }
     };
+
+    public static FatalTerminationEvent consumeFatalTerminationForComputer(String computerUuid) {
+        if (computerUuid == null) {
+            return null;
+        }
+
+        while (true) {
+            FatalTerminationEvent event = pendingFatalTermination.get();
+            if (event == null || event.computerUuid == null ||
+                    !event.computerUuid.equalsIgnoreCase(computerUuid)) {
+                return null;
+            }
+
+            if (pendingFatalTermination.compareAndSet(event, null)) {
+                return event;
+            }
+        }
+    }
+
+    public static void clearPendingFatalTermination() {
+        pendingFatalTermination.set(null);
+    }
+
+    private void publishFatalTermination() {
+        if (stopRequested || isFinishing() || isDestroyed()) {
+            return;
+        }
+
+        String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
+        if (computerUuid == null || !fatalTerminationPublished.compareAndSet(false, true)) {
+            return;
+        }
+
+        // A pending event belongs to the first terminal failure. Later callbacks from
+        // this or another finishing Game must not overwrite it before AppView consumes it.
+        pendingFatalTermination.compareAndSet(null,
+                new FatalTerminationEvent(computerUuid, appId));
+    }
 
     @SuppressLint({"MissingInflatedId", "ClickableViewAccessibility"})
     @Override
@@ -859,6 +921,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             }
 
             // If we can't find an AVC decoder, we can't proceed
+            publishFatalTermination();
             Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title),
                     "This device or ROM doesn't support hardware accelerated H.264 playback.", true);
             return;
@@ -3532,6 +3595,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                         dialogText += "\n\n" + getResources().getString(R.string.nettest_text_blocked);
                     }
 
+                    publishFatalTermination();
                     Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_error_title), dialogText, true);
                     finishSecondScreen();
                 }
@@ -3585,6 +3649,13 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 if (!displayedFailureDialog) {
                     displayedFailureDialog = true;
                     LimeLog.severe("Connection terminated: " + errorCode);
+
+                    // Publish before stopConnection(), which marks stopRequested as part of
+                    // cleanup. The callback itself was already rejected above if lifecycle
+                    // cancellation had begun.
+                    if (errorCode != MoonBridge.ML_ERROR_GRACEFUL_TERMINATION) {
+                        publishFatalTermination();
+                    }
                     stopConnection();
 
                     // Display the error dialog if it was an unexpected termination.

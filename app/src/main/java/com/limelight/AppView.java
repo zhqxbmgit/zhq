@@ -80,6 +80,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private boolean autoDesktopLaunchDispatched = false;
     private boolean autoDesktopConfirmationPending = false;
     private boolean autoDesktopConfirmationCancelled = false;
+    private boolean fatalAutoDesktopLaunchBlocked = false;
 
     private PreferenceConfiguration prefConfig;
 
@@ -102,6 +103,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     public final static String AUTO_START_DESKTOP_STREAM_EXTRA = "auto_start_desktop_stream";
     private final static String AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE =
             "autoDesktopConfirmationCancelled";
+    private final static String FATAL_AUTO_DESKTOP_LAUNCH_BLOCKED_STATE =
+            "fatalAutoDesktopLaunchBlocked";
 
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
@@ -310,9 +313,13 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         // retains the explicit-termination suppression for the existing flow.
         if (savedInstanceState == null) {
             Game.terminatedByUser = false;
+            fatalAutoDesktopLaunchBlocked = false;
+            Game.clearPendingFatalTermination();
         } else {
             autoDesktopConfirmationCancelled = savedInstanceState.getBoolean(
                     AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE, false);
+            fatalAutoDesktopLaunchBlocked = savedInstanceState.getBoolean(
+                    FATAL_AUTO_DESKTOP_LAUNCH_BLOCKED_STATE, false);
         }
 
         // Assume we're in the foreground when created to avoid a race
@@ -362,6 +369,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     protected void onSaveInstanceState(Bundle outState) {
         outState.putBoolean(AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE,
                 autoDesktopConfirmationCancelled || autoDesktopConfirmationPending);
+        outState.putBoolean(FATAL_AUTO_DESKTOP_LAUNCH_BLOCKED_STATE,
+                fatalAutoDesktopLaunchBlocked);
         super.onSaveInstanceState(outState);
     }
 
@@ -419,9 +428,16 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     protected void onResume() {
         super.onResume();
 
+        boolean requireFreshStateAfterLaunch = autoDesktopLaunchDispatched;
+        if (Game.consumeFatalTerminationForComputer(uuidString) != null) {
+            fatalAutoDesktopLaunchBlocked = true;
+            autoDesktopLaunchPending = false;
+            autoDesktopLaunchDispatched = false;
+        }
+
         // A dispatched launch pauses AppView. If this instance becomes visible again,
         // allow the coordinator to handle a legitimate lifecycle resume.
-        if (autoDesktopLaunchDispatched) {
+        if (requireFreshStateAfterLaunch) {
             autoDesktopLaunchPending = false;
             autoDesktopLaunchDispatched = false;
             beginFreshServerInfoWait();
@@ -571,7 +587,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                         () -> UiHelper.displayQuitConfirmationDialog(this, new Runnable() {
                             @Override
                             public void run() {
-                                ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, true);
+                                startAppManually(app.app, true);
                             }
                         }, null),
                         null
@@ -581,7 +597,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     UiHelper.displayQuitConfirmationDialog(this, new Runnable() {
                         @Override
                         public void run() {
-                            ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, withVDiaplay);
+                            startAppManually(app.app, withVDiaplay);
                         }
                     }, null);
                 }
@@ -595,12 +611,12 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     UiHelper.displayVdisplayConfirmationDialog(
                             AppView.this,
                             computer,
-                            () -> ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, true),
+                            () -> startAppManually(app.app, true),
                             null
                     );
                 } else {
                     // Resume is the same as start for us
-                    ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, withVDiaplay);
+                    startAppManually(app.app, withVDiaplay);
                 }
                 return true;
             }
@@ -762,11 +778,20 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     @MainThread
+    private void startAppManually(NvApp app, boolean withVirtualDisplay) {
+        // Reaching this method means the user completed any required confirmation and
+        // is starting a new attempt. Automatic launches never pass through this method.
+        fatalAutoDesktopLaunchBlocked = false;
+        ServerHelper.doStart(AppView.this, app, computer, managerBinder, withVirtualDisplay);
+    }
+
+    @MainThread
     private void coordinateAutoDesktopLaunch() {
         if (computer == null || computer.state != ComputerDetails.State.ONLINE ||
                 computer.pairState != PairingManager.PairState.PAIRED ||
                 !receivedServerInfo || requireFreshServerInfo || autoDesktopLaunchPending ||
-                autoDesktopConfirmationCancelled || Game.terminatedByUser) {
+                autoDesktopConfirmationCancelled || fatalAutoDesktopLaunchBlocked ||
+                Game.terminatedByUser) {
             return;
         }
 
@@ -815,7 +840,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
     @MainThread
     private void dispatchAutoDesktopLaunch(NvApp desktopApp, boolean withVirtualDisplay) {
-        if (managerBinder == null || computer == null ||
+        if (fatalAutoDesktopLaunchBlocked || managerBinder == null || computer == null ||
                 computer.state != ComputerDetails.State.ONLINE ||
                 computer.pairState != PairingManager.PairState.PAIRED ||
                 !receivedServerInfo || requireFreshServerInfo || computer.activeAddress == null) {
@@ -922,7 +947,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 // Only open the context menu if something is running, otherwise start it
                 if (lastRunningAppId != 0) {
                     if (prefConfig.resumeWithoutConfirm && lastRunningAppId == app.app.getAppId()) {
-                        ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, prefConfig.useVirtualDisplay);
+                        startAppManually(app.app, prefConfig.useVirtualDisplay);
                     } else {
                         openContextMenu(arg1);
                     }
@@ -931,11 +956,11 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                         UiHelper.displayVdisplayConfirmationDialog(
                                 AppView.this,
                                 computer,
-                                () -> ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, true),
+                                () -> startAppManually(app.app, true),
                                 null
                         );
                     } else {
-                        ServerHelper.doStart(AppView.this, app.app, computer, managerBinder, prefConfig.useVirtualDisplay);
+                        startAppManually(app.app, prefConfig.useVirtualDisplay);
                     }
                 }
             }
