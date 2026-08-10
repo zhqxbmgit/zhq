@@ -146,13 +146,23 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public static Game instance;
     public static boolean terminatedByUser = false;
 
+    private enum TerminationClassification {
+        RECOVERABLE_CANDIDATE,
+        FATAL,
+        USER_CANCELLED,
+        GRACEFUL
+    }
+
     public static final class FatalTerminationEvent {
         private final String computerUuid;
         private final int appId;
+        private final long recoverySessionId;
 
-        private FatalTerminationEvent(String computerUuid, int appId) {
+        private FatalTerminationEvent(String computerUuid, int appId,
+                                      long recoverySessionId) {
             this.computerUuid = computerUuid;
             this.appId = appId;
+            this.recoverySessionId = recoverySessionId;
         }
 
         public String getComputerUuid() {
@@ -161,6 +171,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         public int getAppId() {
             return appId;
+        }
+
+        public long getRecoverySessionId() {
+            return recoverySessionId;
         }
     }
 
@@ -212,7 +226,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private SpinnerDialog spinner;
     private boolean displayedFailureDialog = false;
     private final AtomicBoolean fatalTerminationPublished = new AtomicBoolean(false);
+    private final AtomicBoolean terminationPublished = new AtomicBoolean(false);
     public boolean connected = false;
+    private final AtomicBoolean connectionStartedForCurrentAttempt =
+            new AtomicBoolean(false);
+    private volatile boolean userInitiatedTermination = false;
     private boolean autoEnterPip = false;
     private boolean surfaceCreated = false;
     private boolean attemptedConnection = false;
@@ -293,6 +311,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public static final String EXTRA_VDISPLAY = "VirtualDisplay";
     public static final String EXTRA_SERVER_COMMANDS = "ServerCommands";
     public static final String EXTRA_DISPLAY_ID = "DisplayID";
+    public static final String EXTRA_RECOVERY_SESSION_ID = "RecoverySessionId";
 
     public static final String CLIPBOARD_IDENTIFIER = "ArtemisStreaming";
 
@@ -304,6 +323,9 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     private String uniqueId;
     private X509Certificate serverCert;
     private boolean vDisplay;
+    private long recoverySessionId = StreamRecoveryStore.NO_SESSION_ID;
+    private boolean launchedAsRecovery = false;
+    private volatile boolean recoveryStableGuardEstablished = true;
     private ArrayList<String> serverCommands;
 
     private ViewParent rootView;
@@ -390,6 +412,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return;
         }
 
+        // A fatal result from a recovery attempt must consume that exact session so
+        // AppView cannot dispatch it again after the error dialog is dismissed.
+        StreamRecoveryStore.clearIfSessionMatches(this, recoverySessionId);
+
         String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
         if (computerUuid == null || !fatalTerminationPublished.compareAndSet(false, true)) {
             return;
@@ -398,7 +424,71 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         // A pending event belongs to the first terminal failure. Later callbacks from
         // this or another finishing Game must not overwrite it before AppView consumes it.
         pendingFatalTermination.compareAndSet(null,
-                new FatalTerminationEvent(computerUuid, appId));
+                new FatalTerminationEvent(computerUuid, appId, recoverySessionId));
+    }
+
+    private void markUserInitiatedStop() {
+        userInitiatedTermination = true;
+        terminatedByUser = true;
+        StreamRecoveryStore.cancel(this, recoverySessionId);
+    }
+
+    private TerminationClassification classifyTermination(
+            int errorCode,
+            boolean connectionStartedAtTermination,
+            boolean recoveryStableGuardEstablishedAtTermination,
+            boolean recoveryWithinUnstableWindowAtTermination) {
+        if (userInitiatedTermination || terminatedByUser ||
+                stopRequested || isFinishing() || isDestroyed()) {
+            return TerminationClassification.USER_CANCELLED;
+        }
+
+        if (errorCode == MoonBridge.ML_ERROR_GRACEFUL_TERMINATION) {
+            return TerminationClassification.GRACEFUL;
+        }
+
+        if (!connectionStartedAtTermination) {
+            return TerminationClassification.FATAL;
+        }
+
+        if (launchedAsRecovery) {
+            if (!recoveryStableGuardEstablishedAtTermination ||
+                    recoveryWithinUnstableWindowAtTermination) {
+                return TerminationClassification.FATAL;
+            }
+        }
+
+        if (errorCode == -1) {
+            return TerminationClassification.RECOVERABLE_CANDIDATE;
+        }
+
+        return TerminationClassification.FATAL;
+    }
+
+    private boolean createRecoveryAndReturnToAppView() {
+        String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
+        StreamRecoveryStore.RecoveryRecord recovery =
+                StreamRecoveryStore.createRecovery(
+                        this,
+                        computerUuid,
+                        appUUID,
+                        appId,
+                        appName,
+                        vDisplay);
+        if (recovery == null) {
+            return false;
+        }
+
+        stopConnection();
+
+        Intent intent = new Intent(this, AppView.class);
+        intent.putExtra(AppView.UUID_EXTRA, computerUuid);
+        intent.putExtra(AppView.NAME_EXTRA, pcName);
+        intent.putExtra(EXTRA_RECOVERY_SESSION_ID, recovery.getSessionId());
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(intent);
+        finish();
+        return true;
     }
 
     @SuppressLint({"MissingInflatedId", "ClickableViewAccessibility"})
@@ -636,6 +726,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         appId = Game.this.getIntent().getIntExtra(EXTRA_APP_ID, StreamConfiguration.INVALID_APP_ID);
         uniqueId = Game.this.getIntent().getStringExtra(EXTRA_UNIQUEID);
         vDisplay = Game.this.getIntent().getBooleanExtra(EXTRA_VDISPLAY, false);
+        recoverySessionId = Game.this.getIntent().getLongExtra(
+                EXTRA_RECOVERY_SESSION_ID, StreamRecoveryStore.NO_SESSION_ID);
+        launchedAsRecovery = recoverySessionId != StreamRecoveryStore.NO_SESSION_ID;
+        recoveryStableGuardEstablished = !launchedAsRecovery;
         serverCommands = Game.this.getIntent().getStringArrayListExtra(EXTRA_SERVER_COMMANDS);
         boolean appSupportsHdr = Game.this.getIntent().getBooleanExtra(EXTRA_APP_HDR, false);
         byte[] derCertData = Game.this.getIntent().getByteArrayExtra(EXTRA_SERVER_CERT);
@@ -921,9 +1015,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             }
 
             // If we can't find an AVC decoder, we can't proceed
-            publishFatalTermination();
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title),
-                    "This device or ROM doesn't support hardware accelerated H.264 playback.", true);
+            if (terminationPublished.compareAndSet(false, true)) {
+                publishFatalTermination();
+                Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title),
+                        "This device or ROM doesn't support hardware accelerated H.264 playback.", true);
+            }
             return;
         }
 
@@ -1802,6 +1898,14 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     protected void onStop() {
         super.onStop();
 
+        // Cancelling the connection spinner finishes the Activity directly, so it
+        // bypasses onBackPressed() and the game-menu callbacks. Treat that foreground
+        // finish as an explicit cancellation before local connection teardown.
+        if (isFinishing() && spinner != null &&
+                !terminationPublished.get() && !userInitiatedTermination) {
+            markUserInitiatedStop();
+        }
+
         SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs();
 
@@ -1985,6 +2089,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
                     // Quit
                     case KeyEvent.KEYCODE_Q:
+                        markUserInitiatedStop();
                         finish();
                         break;
 
@@ -3555,6 +3660,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     return;
                 }
 
+                if (!terminationPublished.compareAndSet(false, true)) {
+                    return;
+                }
+
                 if (spinner != null) {
                     spinner.dismiss();
                     spinner = null;
@@ -3624,6 +3733,19 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return;
         }
 
+        // Classify the 30 second guard at callback arrival. The connectivity test
+        // below can take long enough to cross the boundary before UI work runs.
+        final boolean connectionStartedAtTermination =
+                connectionStartedForCurrentAttempt.get();
+        final boolean recoveryStableGuardEstablishedAtTermination =
+                recoveryStableGuardEstablished;
+        final boolean recoveryWithinUnstableWindowAtTermination =
+                errorCode == -1 &&
+                launchedAsRecovery &&
+                recoveryStableGuardEstablishedAtTermination &&
+                StreamRecoveryStore.isWithinUnstableRecoveryWindow(
+                        this, recoverySessionId);
+
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);
@@ -3636,6 +3758,16 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                     return;
                 }
 
+                if (!terminationPublished.compareAndSet(false, true)) {
+                    return;
+                }
+
+                TerminationClassification classification = classifyTermination(
+                        errorCode,
+                        connectionStartedAtTermination,
+                        recoveryStableGuardEstablishedAtTermination,
+                        recoveryWithinUnstableWindowAtTermination);
+
                 // Let the display go to sleep now
                 getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
@@ -3646,73 +3778,90 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 // Ungrab input
                 setInputGrabState(false);
 
-                if (!displayedFailureDialog) {
-                    displayedFailureDialog = true;
-                    LimeLog.severe("Connection terminated: " + errorCode);
+                displayedFailureDialog = true;
+                LimeLog.severe("Connection terminated: " + errorCode +
+                        " (" + classification + ")");
 
-                    // Publish before stopConnection(), which marks stopRequested as part of
-                    // cleanup. The callback itself was already rejected above if lifecycle
-                    // cancellation had begun.
-                    if (errorCode != MoonBridge.ML_ERROR_GRACEFUL_TERMINATION) {
-                        publishFatalTermination();
-                    }
+                if (classification == TerminationClassification.USER_CANCELLED) {
+                    StreamRecoveryStore.cancel(Game.this, recoverySessionId);
                     stopConnection();
+                    finish();
+                    return;
+                }
 
-                    // Display the error dialog if it was an unexpected termination.
-                    // Otherwise, just finish the activity immediately.
-                    if (errorCode != MoonBridge.ML_ERROR_GRACEFUL_TERMINATION) {
-                        String message;
+                if (classification == TerminationClassification.GRACEFUL) {
+                    StreamRecoveryStore.clearIfSessionMatches(
+                            Game.this, recoverySessionId);
+                    stopConnection();
+                    finish();
+                    return;
+                }
 
-                        if (portTestResult != MoonBridge.ML_TEST_RESULT_INCONCLUSIVE && portTestResult != 0) {
-                            // If we got a blocked result, that supersedes any other error message
-                            message = getResources().getString(R.string.nettest_text_blocked);
-                        }
-                        else {
-                            switch (errorCode) {
-                                case MoonBridge.ML_ERROR_NO_VIDEO_TRAFFIC:
-                                    message = getResources().getString(R.string.no_video_received_error);
-                                    break;
-
-                                case MoonBridge.ML_ERROR_NO_VIDEO_FRAME:
-                                    message = getResources().getString(R.string.no_frame_received_error);
-                                    break;
-
-                                case MoonBridge.ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
-                                case MoonBridge.ML_ERROR_PROTECTED_CONTENT:
-                                    message = getResources().getString(R.string.early_termination_error);
-                                    break;
-
-                                case MoonBridge.ML_ERROR_FRAME_CONVERSION:
-                                    message = getResources().getString(R.string.frame_conversion_error);
-                                    break;
-
-                                default:
-                                    String errorCodeString;
-                                    // We'll assume large errors are hex values
-                                    if (Math.abs(errorCode) > 1000) {
-                                        errorCodeString = Integer.toHexString(errorCode);
-                                    }
-                                    else {
-                                        errorCodeString = Integer.toString(errorCode);
-                                    }
-                                    message = getResources().getString(R.string.conn_terminated_msg) + "\n\n" +
-                                            getResources().getString(R.string.error_code_prefix) + " " + errorCodeString;
-                                    break;
-                            }
-                        }
-
-                        if (portFlags != 0) {
-                            message += "\n\n" + getResources().getString(R.string.check_ports_msg) + "\n" +
-                                    MoonBridge.stringifyPortFlags(portFlags, "\n");
-                        }
-
-                        Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_terminated_title),
-                                message, true);
+                if (classification == TerminationClassification.RECOVERABLE_CANDIDATE) {
+                    LimeLog.warning("Stream interrupted after connection start; entering recovery");
+                    if (createRecoveryAndReturnToAppView()) {
+                        return;
                     }
-                    else {
-                        finish();
+
+                    // Persistence is required before leaving Game. If it failed,
+                    // retain the existing B02 fatal behavior instead of retrying
+                    // without a durable, session-scoped gate.
+                    LimeLog.severe("Failed to persist stream recovery state");
+                    classification = TerminationClassification.FATAL;
+                }
+
+                // All remaining outcomes are fatal. Publish before stopConnection(),
+                // which marks stopRequested and intentionally suppresses later callbacks.
+                publishFatalTermination();
+                stopConnection();
+
+                String message;
+
+                if (portTestResult != MoonBridge.ML_TEST_RESULT_INCONCLUSIVE && portTestResult != 0) {
+                    // If we got a blocked result, that supersedes any other error message
+                    message = getResources().getString(R.string.nettest_text_blocked);
+                }
+                else {
+                    switch (errorCode) {
+                        case MoonBridge.ML_ERROR_NO_VIDEO_TRAFFIC:
+                            message = getResources().getString(R.string.no_video_received_error);
+                            break;
+
+                        case MoonBridge.ML_ERROR_NO_VIDEO_FRAME:
+                            message = getResources().getString(R.string.no_frame_received_error);
+                            break;
+
+                        case MoonBridge.ML_ERROR_UNEXPECTED_EARLY_TERMINATION:
+                        case MoonBridge.ML_ERROR_PROTECTED_CONTENT:
+                            message = getResources().getString(R.string.early_termination_error);
+                            break;
+
+                        case MoonBridge.ML_ERROR_FRAME_CONVERSION:
+                            message = getResources().getString(R.string.frame_conversion_error);
+                            break;
+
+                        default:
+                            String errorCodeString;
+                            // We'll assume large errors are hex values
+                            if (Math.abs(errorCode) > 1000) {
+                                errorCodeString = Integer.toHexString(errorCode);
+                            }
+                            else {
+                                errorCodeString = Integer.toString(errorCode);
+                            }
+                            message = getResources().getString(R.string.conn_terminated_msg) + "\n\n" +
+                                    getResources().getString(R.string.error_code_prefix) + " " + errorCodeString;
+                            break;
                     }
                 }
+
+                if (portFlags != 0) {
+                    message += "\n\n" + getResources().getString(R.string.check_ports_msg) + "\n" +
+                            MoonBridge.stringifyPortFlags(portFlags, "\n");
+                }
+
+                Dialog.displayDialog(Game.this, getResources().getString(R.string.conn_terminated_title),
+                        message, true);
             }
         });
     }
@@ -3755,6 +3904,16 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     public void connectionStarted() {
         if (shouldIgnoreConnectionCallback()) {
             return;
+        }
+
+        // Record this before posting UI work so an immediately following
+        // termination is still recognized as a post-start failure. Recovery
+        // attempts also begin their 30 second stability window at this callback.
+        boolean firstConnectionStartedForCurrentAttempt =
+                connectionStartedForCurrentAttempt.compareAndSet(false, true);
+        if (launchedAsRecovery && firstConnectionStartedForCurrentAttempt) {
+            recoveryStableGuardEstablished =
+                    StreamRecoveryStore.markConnected(this, recoverySessionId);
         }
 
         runOnUiThread(new Runnable() {
@@ -4082,6 +4241,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             showGameMenu(null);
             return;
         }
+        markUserInitiatedStop();
         super.onBackPressed();
     }
 
@@ -4317,7 +4477,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void disconnect() {
-        terminatedByUser = true;
+        markUserInitiatedStop();
         if (prefConfig.smartClipboardSync) {
             getClipboard(-1);
         }
@@ -4336,7 +4496,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         builder.setMessage(R.string.game_dialog_message_quit_confirm);
 
         builder.setPositiveButton(getString(R.string.yes), (dialog, which) -> {
-            terminatedByUser = true;
+            markUserInitiatedStop();
             quitOnStop = true;
             dialog.dismiss();
             finish();

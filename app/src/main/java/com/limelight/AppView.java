@@ -46,7 +46,9 @@ import android.view.ContextMenu.ContextMenuInfo;
 import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
+import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
@@ -58,6 +60,17 @@ import androidx.appcompat.app.AppCompatActivity;
 import org.xmlpull.v1.XmlPullParserException;
 
 public class AppView extends AppCompatActivity implements AdapterFragmentCallbacks {
+    private enum RecoveryState {
+        IDLE,
+        WAITING_FOR_HOST,
+        WAITING_FOR_FRESH_SERVER_INFO,
+        WAITING_FOR_FRESH_APP_LIST,
+        READY_TO_LAUNCH,
+        LAUNCH_IN_FLIGHT,
+        BLOCKED_FATAL,
+        CANCELLED
+    }
+
     private AppGridAdapter appGridAdapter;
     private String uuidString;
     private ShortcutHelper shortcutHelper;
@@ -81,6 +94,29 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private boolean autoDesktopConfirmationPending = false;
     private boolean autoDesktopConfirmationCancelled = false;
     private boolean fatalAutoDesktopLaunchBlocked = false;
+
+    private RecoveryState recoveryState = RecoveryState.IDLE;
+    private StreamRecoveryStore.RecoveryRecord recoveryRecord;
+    private long recoverySessionId = StreamRecoveryStore.NO_SESSION_ID;
+    private long requestedRecoverySessionId = StreamRecoveryStore.NO_SESSION_ID;
+    private long activeUpdateGeneration;
+    private long requiredAppListSuccessGeneration;
+    private boolean firstResumePending = true;
+    private boolean updateGenerationPrepared;
+    private boolean computerUpdatesStarted;
+    private boolean receivedFreshAppList;
+    private ComputerManagerService.AppListSnapshot freshAppListSnapshot;
+    private int freshRunningAppId;
+    private String freshRunningAppUuid;
+    private int recoveryTerminalMessageRes;
+
+    private View recoveryOverlay;
+    private View appFragmentContainer;
+    private TextView appListLabel;
+    private TextView recoveryStatus;
+    private ProgressBar recoveryProgress;
+    private Button recoveryCancel;
+    private ExtendedFloatingActionButton profilesButton;
 
     private PreferenceConfiguration prefConfig;
 
@@ -122,7 +158,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     // Get the computer object
                     computer = localBinder.getComputer(uuidString);
                     if (computer == null) {
-                        finish();
+                        finishWithRecoveryLog("service_computer_missing");
                         return;
                     }
 
@@ -137,7 +173,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                                 showHiddenApps);
                     } catch (Exception e) {
                         e.printStackTrace();
-                        finish();
+                        finishWithRecoveryLog("app_grid_initialization_failed");
                         return;
                     }
 
@@ -216,15 +252,32 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         }
 
         // Don't start polling if we're not bound or in the foreground
-        if (managerBinder == null || !inForeground) {
+        if (managerBinder == null || !inForeground || computerUpdatesStarted) {
             return;
         }
+
+        if (!updateGenerationPrepared) {
+            prepareForegroundUpdateGeneration(requireFreshServerInfo);
+        }
+
+        if (poller == null) {
+            poller = managerBinder.createAppListPoller(computer);
+        }
+
+        requiredAppListSuccessGeneration = poller.getSuccessGeneration();
+        receivedFreshAppList = false;
+        freshAppListSnapshot = null;
 
         if (requireFreshServerInfo && !invalidatedStateForFreshServerInfo) {
             receivedServerInfo = false;
             managerBinder.invalidateStateForComputer(uuidString);
             invalidatedStateForFreshServerInfo = true;
         }
+
+        final long callbackGeneration = activeUpdateGeneration;
+        final long callbackSessionId = hasActiveRecoverySession() ?
+                recoverySessionId : StreamRecoveryStore.NO_SESSION_ID;
+        computerUpdatesStarted = true;
 
         managerBinder.startPolling(new ComputerManagerListener() {
             @Override
@@ -239,59 +292,57 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     return;
                 }
 
-                if (details.state == ComputerDetails.State.OFFLINE) {
-                    // The PC is unreachable now
-                    AppView.this.runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            // Display a toast to the user and quit the activity
-                            Toast.makeText(AppView.this, R.string.lost_connection, Toast.LENGTH_SHORT).show();
-                            finish();
-                        }
-                    });
-
-                    return;
-                }
-
-                // Close immediately if the PC is no longer paired
-                if (details.state == ComputerDetails.State.ONLINE && details.pairState != PairingManager.PairState.PAIRED) {
-                    AppView.this.runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            // Disable shortcuts referencing this PC for now
-                            shortcutHelper.disableComputerShortcut(details,
-                                    getResources().getString(R.string.scut_not_paired));
-
-                            // Display a toast to the user and quit the activity
-                            Toast.makeText(AppView.this, R.string.scut_not_paired, Toast.LENGTH_SHORT).show();
-                            finish();
-                        }
-                    });
-
-                    return;
-                }
+                // ComputerDetails is shared and mutated by both pollers. Snapshot it before
+                // posting to the main thread so a later poll cannot change this callback.
+                final ComputerDetails detailsSnapshot = new ComputerDetails(details);
 
                 List<NvApp> parsedAppList = null;
                 try {
-                    if (details.rawAppList != null) {
-                        parsedAppList = NvHTTP.getAppListByReader(new StringReader(details.rawAppList));
+                    if (detailsSnapshot.rawAppList != null) {
+                        parsedAppList = NvHTTP.getAppListByReader(
+                                new StringReader(detailsSnapshot.rawAppList));
                     }
                 } catch (XmlPullParserException | IOException e) {
                     e.printStackTrace();
                 }
 
                 final List<NvApp> finalParsedAppList = parsedAppList;
-                AppView.this.runOnUiThread(() -> handleComputerUpdateOnMainThread(details, finalParsedAppList));
+                final ComputerManagerService.AppListSnapshot appListSnapshot =
+                        poller.getLatestSuccessfulSnapshot();
+                AppView.this.runOnUiThread(() -> {
+                    if (!isCurrentUpdateCallback(callbackGeneration, callbackSessionId)) {
+                        return;
+                    }
+
+                    handleComputerUpdateOnMainThread(
+                            detailsSnapshot,
+                            finalParsedAppList,
+                            appListSnapshot);
+                });
             }
         });
 
-        if (poller == null) {
-            poller = managerBinder.createAppListPoller(computer);
-        }
         poller.start();
     }
 
+    @MainThread
+    private boolean isCurrentUpdateCallback(long callbackGeneration, long callbackSessionId) {
+        if (!inForeground || !computerUpdatesStarted ||
+                callbackGeneration != activeUpdateGeneration ||
+                recoveryState == RecoveryState.CANCELLED) {
+            return false;
+        }
+
+        if (callbackSessionId == StreamRecoveryStore.NO_SESSION_ID) {
+            return !hasActiveRecoverySession();
+        }
+
+        return hasActiveRecoverySession() && callbackSessionId == recoverySessionId;
+    }
+
     private void stopComputerUpdates() {
+        computerUpdatesStarted = false;
+
         if (poller != null) {
             poller.stop();
         }
@@ -309,17 +360,50 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        showHiddenApps = getIntent().getBooleanExtra(SHOW_HIDDEN_APPS_EXTRA, false);
+        autoStartDesktopRequested = getIntent().getBooleanExtra(
+                AUTO_START_DESKTOP_STREAM_EXTRA, false);
+        uuidString = getIntent().getStringExtra(UUID_EXTRA);
+
+        requestedRecoverySessionId = getIntent().getLongExtra(
+                Game.EXTRA_RECOVERY_SESSION_ID,
+                StreamRecoveryStore.NO_SESSION_ID);
+        StreamRecoveryStore.clearExpired(this);
+        StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                loadPendingRecoveryForThisView();
+
         // A newly entered AppView represents a new user launch flow. Activity recreation
         // retains the explicit-termination suppression for the existing flow.
         if (savedInstanceState == null) {
             Game.terminatedByUser = false;
             fatalAutoDesktopLaunchBlocked = false;
-            Game.clearPendingFatalTermination();
+            if (pendingRecovery == null &&
+                    requestedRecoverySessionId == StreamRecoveryStore.NO_SESSION_ID) {
+                Game.clearPendingFatalTermination();
+            }
         } else {
             autoDesktopConfirmationCancelled = savedInstanceState.getBoolean(
                     AUTO_DESKTOP_CONFIRMATION_CANCELLED_STATE, false);
             fatalAutoDesktopLaunchBlocked = savedInstanceState.getBoolean(
                     FATAL_AUTO_DESKTOP_LAUNCH_BLOCKED_STATE, false);
+        }
+
+        if (fatalAutoDesktopLaunchBlocked) {
+            if (pendingRecovery != null) {
+                StreamRecoveryStore.clearIfSessionMatches(
+                        this,
+                        pendingRecovery.getSessionId(),
+                        "appview_saved_fatal_block");
+            }
+            logRecoveryEvent(
+                    "saved_b02_block",
+                    pendingRecovery != null ?
+                            pendingRecovery.getSessionId() :
+                            requestedRecoverySessionId);
+            pendingRecovery = null;
+            recoveryState = RecoveryState.BLOCKED_FATAL;
+        } else if (pendingRecovery != null) {
+            activateRecovery(pendingRecovery);
         }
 
         // Assume we're in the foreground when created to avoid a race
@@ -332,6 +416,15 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
         setContentView(R.layout.activity_app_view);
 
+        appFragmentContainer = findViewById(R.id.appFragmentContainer);
+        appListLabel = findViewById(R.id.appListText);
+        profilesButton = findViewById(R.id.profilesButton);
+        recoveryOverlay = findViewById(R.id.streamRecoveryOverlay);
+        recoveryStatus = findViewById(R.id.streamRecoveryStatus);
+        recoveryProgress = findViewById(R.id.streamRecoveryProgress);
+        recoveryCancel = findViewById(R.id.streamRecoveryCancel);
+        recoveryCancel.setOnClickListener(v -> cancelRecovery("cancel_button"));
+
         // Allow floating expanded PiP overlays while browsing apps
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setShouldDockBigOverlays(false);
@@ -340,12 +433,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         UiHelper.notifyNewRootView(this);
 
         // Setup the profiles button
-        findViewById(R.id.profilesButton)
-            .setOnClickListener(v -> startActivity(new Intent(this, ProfilesActivity.class)));
-
-        showHiddenApps = getIntent().getBooleanExtra(SHOW_HIDDEN_APPS_EXTRA, false);
-        autoStartDesktopRequested = getIntent().getBooleanExtra(AUTO_START_DESKTOP_STREAM_EXTRA, false);
-        uuidString = getIntent().getStringExtra(UUID_EXTRA);
+        profilesButton.setOnClickListener(
+                v -> startActivity(new Intent(this, ProfilesActivity.class)));
 
         SharedPreferences hiddenAppsPrefs = getSharedPreferences(HIDDEN_APPS_PREF_FILENAME, MODE_PRIVATE);
         for (String hiddenAppIdStr : hiddenAppsPrefs.getStringSet(uuidString, new HashSet<String>())) {
@@ -354,11 +443,12 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
         String computerName = getIntent().getStringExtra(NAME_EXTRA);
 
-        TextView label = findViewById(R.id.appListText);
         setTitle(computerName);
-        label.setText(computerName);
+        appListLabel.setText(computerName);
 
         this.prefConfig = PreferenceConfiguration.readPreferences(this);
+        updateRecoveryUi();
+        prepareForegroundUpdateGeneration(true);
 
         // Bind to the computer manager service
         bindService(new Intent(this, ComputerManagerService.class), serviceConnection,
@@ -372,6 +462,275 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         outState.putBoolean(FATAL_AUTO_DESKTOP_LAUNCH_BLOCKED_STATE,
                 fatalAutoDesktopLaunchBlocked);
         super.onSaveInstanceState(outState);
+    }
+
+    private StreamRecoveryStore.RecoveryRecord loadPendingRecoveryForThisView() {
+        StreamRecoveryStore.RecoveryRecord pending =
+                StreamRecoveryStore.loadPendingRecovery(this, uuidString);
+        if (pending != null &&
+                requestedRecoverySessionId != StreamRecoveryStore.NO_SESSION_ID &&
+                pending.getSessionId() != requestedRecoverySessionId) {
+            LimeLog.warning("Stream recovery AppView: sessionId=" +
+                    pending.getSessionId() +
+                    " requestedSessionId=" + requestedRecoverySessionId +
+                    " computerUuid=" + uuidString +
+                    " state=" + recoveryState +
+                    " reason=requested_session_mismatch_ignored");
+        }
+
+        // The durable pending session for this computer is authoritative. The
+        // session carried by the Intent is diagnostic only because an existing
+        // AppView can retain an older Intent across Activity/task reconstruction.
+        return pending;
+    }
+
+    private void logRecoveryEvent(String reason, long sessionId) {
+        LimeLog.info("Stream recovery AppView: sessionId=" + sessionId +
+                " computerUuid=" + uuidString +
+                " state=" + recoveryState +
+                " reason=" + reason);
+    }
+
+    private void finishWithRecoveryLog(String reason) {
+        logRecoveryEvent(reason, recoverySessionId);
+        finish();
+    }
+
+    @MainThread
+    private boolean hasActiveRecoverySession() {
+        return recoveryRecord != null &&
+                recoverySessionId != StreamRecoveryStore.NO_SESSION_ID &&
+                recoveryState != RecoveryState.BLOCKED_FATAL &&
+                recoveryState != RecoveryState.CANCELLED;
+    }
+
+    @MainThread
+    private void activateRecovery(StreamRecoveryStore.RecoveryRecord record) {
+        // Invalidate callbacks captured before this durable recovery session was
+        // adopted. Callers that activate from a live callback must restart polling
+        // so the replacement listener captures this session and generation.
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+        recoveryRecord = record;
+        recoverySessionId = record.getSessionId();
+        recoveryState = RecoveryState.WAITING_FOR_HOST;
+        recoveryTerminalMessageRes = 0;
+        autoDesktopLaunchPending = false;
+        autoDesktopLaunchDispatched = false;
+        autoDesktopConfirmationPending = false;
+
+        if (blockingLoadSpinner != null) {
+            blockingLoadSpinner.dismiss();
+            blockingLoadSpinner = null;
+        }
+
+        logRecoveryEvent("recovery_activated", recoverySessionId);
+        updateRecoveryUi();
+    }
+
+    @MainThread
+    private boolean reactivatePendingRecoveryFromHostCallback(String reason) {
+        StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                loadPendingRecoveryForThisView();
+        if (pendingRecovery == null) {
+            return false;
+        }
+
+        activateRecovery(pendingRecovery);
+        logRecoveryEvent(reason, pendingRecovery.getSessionId());
+
+        // The current listener captured NO_SESSION_ID (otherwise this callback
+        // could not have reached the ordinary host-state path). Replace it so
+        // future callbacks remain valid for the newly adopted recovery session.
+        if (computerUpdatesStarted) {
+            stopComputerUpdates();
+        }
+        prepareForegroundUpdateGeneration(true);
+        recoveryState = RecoveryState.WAITING_FOR_HOST;
+        updateRecoveryUi();
+        startComputerUpdates();
+        return true;
+    }
+
+    @MainThread
+    private void waitForRecoveryHost() {
+        receivedServerInfo = false;
+        requireFreshServerInfo = true;
+        receivedFreshAppList = false;
+        freshAppListSnapshot = null;
+        freshRunningAppId = 0;
+        freshRunningAppUuid = null;
+        if (poller != null) {
+            requiredAppListSuccessGeneration = poller.getSuccessGeneration();
+        }
+        recoveryState = RecoveryState.WAITING_FOR_HOST;
+        updateRecoveryUi();
+    }
+
+    @MainThread
+    private void deactivateRecovery() {
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+        recoveryRecord = null;
+        recoverySessionId = StreamRecoveryStore.NO_SESSION_ID;
+        recoveryState = RecoveryState.IDLE;
+        recoveryTerminalMessageRes = 0;
+        updateRecoveryUi();
+    }
+
+    @MainThread
+    private void prepareForegroundUpdateGeneration(boolean requireFreshState) {
+        activeUpdateGeneration++;
+        updateGenerationPrepared = true;
+        receivedFreshAppList = false;
+        freshAppListSnapshot = null;
+        freshRunningAppId = 0;
+        freshRunningAppUuid = null;
+
+        if (requireFreshState) {
+            beginFreshServerInfoWait();
+        }
+
+        if (hasActiveRecoverySession()) {
+            recoveryState = RecoveryState.WAITING_FOR_FRESH_SERVER_INFO;
+            updateRecoveryUi();
+        }
+    }
+
+    @MainThread
+    private void updateRecoveryUi() {
+        if (recoveryOverlay == null) {
+            return;
+        }
+
+        boolean visible = recoveryState != RecoveryState.IDLE &&
+                recoveryState != RecoveryState.BLOCKED_FATAL;
+        recoveryOverlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+        appFragmentContainer.setVisibility(visible ? View.GONE : View.VISIBLE);
+        appListLabel.setVisibility(visible ? View.GONE : View.VISIBLE);
+        profilesButton.setVisibility(visible ? View.GONE : View.VISIBLE);
+
+        if (!visible) {
+            return;
+        }
+
+        recoveryOverlay.bringToFront();
+        recoveryCancel.setEnabled(true);
+        recoveryCancel.setVisibility(View.VISIBLE);
+        recoveryProgress.setVisibility(
+                recoveryState == RecoveryState.CANCELLED ? View.GONE : View.VISIBLE);
+
+        int messageRes;
+        switch (recoveryState) {
+            case WAITING_FOR_FRESH_SERVER_INFO:
+                messageRes = R.string.stream_recovery_waiting_for_fresh_server_info;
+                break;
+            case WAITING_FOR_FRESH_APP_LIST:
+                messageRes = R.string.stream_recovery_waiting_for_fresh_app_list;
+                break;
+            case READY_TO_LAUNCH:
+                messageRes = R.string.stream_recovery_ready_to_launch;
+                break;
+            case LAUNCH_IN_FLIGHT:
+                messageRes = R.string.stream_recovery_launch_in_flight;
+                break;
+            case CANCELLED:
+                messageRes = recoveryTerminalMessageRes != 0 ?
+                        recoveryTerminalMessageRes :
+                        R.string.stream_recovery_waiting_for_host;
+                break;
+            case WAITING_FOR_HOST:
+            default:
+                messageRes = R.string.stream_recovery_waiting_for_host;
+                break;
+        }
+        recoveryStatus.setText(messageRes);
+    }
+
+    @MainThread
+    private void cancelRecovery(String reason) {
+        long sessionId = recoverySessionId;
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+        recoveryState = RecoveryState.CANCELLED;
+        recoveryRecord = null;
+
+        if (sessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            StreamRecoveryStore.cancel(
+                    this,
+                    sessionId,
+                    "appview_user_cancelled");
+        }
+
+        stopComputerUpdates();
+        if (isTaskRoot()) {
+            Intent pcViewIntent = new Intent(this, PcView.class);
+            pcViewIntent.setAction(Intent.ACTION_MAIN);
+            pcViewIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(pcViewIntent);
+        }
+        finishWithRecoveryLog(reason);
+    }
+
+    @MainThread
+    private void stopRecoveryWithMessage(int messageRes, String reason) {
+        long sessionId = recoverySessionId;
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+
+        if (sessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            StreamRecoveryStore.clearIfSessionMatches(
+                    this,
+                    sessionId,
+                    reason);
+        }
+
+        logRecoveryEvent(reason, sessionId);
+        recoveryRecord = null;
+        recoveryState = RecoveryState.CANCELLED;
+        recoveryTerminalMessageRes = messageRes;
+        stopComputerUpdates();
+        updateRecoveryUi();
+    }
+
+    @MainThread
+    private void blockRecoveryForFatalTermination(long fatalRecoverySessionId,
+                                                   long pendingRecoverySessionId) {
+        if (fatalRecoverySessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            StreamRecoveryStore.clearIfSessionMatches(
+                    this,
+                    fatalRecoverySessionId,
+                    "appview_b02_fatal");
+        } else if (recoverySessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            StreamRecoveryStore.clearIfSessionMatches(
+                    this,
+                    recoverySessionId,
+                    "appview_b02_fatal");
+        } else if (pendingRecoverySessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            StreamRecoveryStore.clearIfSessionMatches(
+                    this,
+                    pendingRecoverySessionId,
+                    "appview_b02_fatal");
+        }
+
+        long blockedSessionId =
+                fatalRecoverySessionId != StreamRecoveryStore.NO_SESSION_ID ?
+                        fatalRecoverySessionId :
+                        (recoverySessionId != StreamRecoveryStore.NO_SESSION_ID ?
+                                recoverySessionId :
+                                pendingRecoverySessionId);
+        logRecoveryEvent("b02_fatal_blocked", blockedSessionId);
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+        recoveryRecord = null;
+        recoverySessionId = StreamRecoveryStore.NO_SESSION_ID;
+        recoveryState = RecoveryState.BLOCKED_FATAL;
+        recoveryTerminalMessageRes = 0;
+        autoDesktopLaunchPending = false;
+        autoDesktopLaunchDispatched = false;
+        updateRecoveryUi();
     }
 
     private void updateHiddenApps(boolean hideImmediately) {
@@ -402,8 +761,11 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 e.printStackTrace();
             }
             LimeLog.info("Loading applist from the network");
-            // We'll need to load from the network
-            loadAppsBlocking();
+            // Recovery has its own non-modal, opaque waiting UI. Never place the
+            // legacy blocking app-list dialog over it.
+            if (recoverySessionId == StreamRecoveryStore.NO_SESSION_ID) {
+                loadAppsBlocking();
+            }
         }
     }
 
@@ -414,6 +776,14 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
     @Override
     protected void onDestroy() {
+        if (hasActiveRecoverySession() && !isFinishing()) {
+            logRecoveryEvent(
+                    isChangingConfigurations() ?
+                            "activity_destroyed_for_configuration_change" :
+                            "activity_destroyed_without_finish",
+                    recoverySessionId);
+        }
+
         super.onDestroy();
 
         SpinnerDialog.closeDialogs(this);
@@ -425,14 +795,105 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+
+        String incomingComputerUuid = intent.getStringExtra(UUID_EXTRA);
+        if (incomingComputerUuid != null && uuidString != null &&
+                !incomingComputerUuid.equalsIgnoreCase(uuidString)) {
+            // This instance owns an adapter, poller, and service state for uuidString.
+            // Start a clean instance rather than carrying this host's saved state into
+            // the incoming host through recreate().
+            StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                    loadPendingRecoveryForThisView();
+            StreamRecoveryStore.cancel(
+                    this,
+                    pendingRecovery != null ?
+                            pendingRecovery.getSessionId() :
+                            recoverySessionId,
+                    "appview_different_computer_intent");
+            activeUpdateGeneration++;
+            updateGenerationPrepared = false;
+            stopComputerUpdates();
+            Intent replacementIntent = new Intent(intent);
+            replacementIntent.setFlags(intent.getFlags() &
+                    ~(Intent.FLAG_ACTIVITY_CLEAR_TOP |
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            finishWithRecoveryLog("different_computer_intent");
+            startActivity(replacementIntent);
+            return;
+        }
+
+        setIntent(intent);
+        requestedRecoverySessionId = intent.getLongExtra(
+                Game.EXTRA_RECOVERY_SESSION_ID,
+                StreamRecoveryStore.NO_SESSION_ID);
+
+        // CLEAR_TOP | SINGLE_TOP delivers recovery to the existing AppView. Hide
+        // its grid and invalidate old callbacks before onResume can draw a frame.
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
+        if (computerUpdatesStarted) {
+            stopComputerUpdates();
+        }
+        StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                loadPendingRecoveryForThisView();
+        if (pendingRecovery != null) {
+            activateRecovery(pendingRecovery);
+            updateRecoveryUi();
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
 
         boolean requireFreshStateAfterLaunch = autoDesktopLaunchDispatched;
-        if (Game.consumeFatalTerminationForComputer(uuidString) != null) {
+        Game.FatalTerminationEvent fatalTermination =
+                Game.consumeFatalTerminationForComputer(uuidString);
+        StreamRecoveryStore.RecoveryRecord unfilteredPendingRecovery =
+                loadPendingRecoveryForThisView();
+        boolean staleFatalTermination = fatalTermination != null &&
+                fatalTermination.getRecoverySessionId() !=
+                        StreamRecoveryStore.NO_SESSION_ID &&
+                unfilteredPendingRecovery != null &&
+                fatalTermination.getRecoverySessionId() !=
+                        unfilteredPendingRecovery.getSessionId();
+        boolean recoveryChanged = false;
+
+        // B02 takes priority over every recovery path. Consume and clear the matching
+        // token before looking for a pending recovery session. A fatal callback from
+        // an older recovery session must not clear or block a newer session.
+        if (fatalTermination != null && !staleFatalTermination) {
             fatalAutoDesktopLaunchBlocked = true;
-            autoDesktopLaunchPending = false;
-            autoDesktopLaunchDispatched = false;
+            blockRecoveryForFatalTermination(
+                    fatalTermination.getRecoverySessionId(),
+                    unfilteredPendingRecovery != null ?
+                            unfilteredPendingRecovery.getSessionId() :
+                            StreamRecoveryStore.NO_SESSION_ID);
+        } else {
+            if (staleFatalTermination) {
+                LimeLog.warning("Stream recovery AppView: sessionId=" +
+                        fatalTermination.getRecoverySessionId() +
+                        " computerUuid=" + uuidString +
+                        " state=" + recoveryState +
+                        " reason=stale_b02_ignored");
+            }
+            StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                    unfilteredPendingRecovery;
+            if (pendingRecovery != null) {
+                if (recoverySessionId != pendingRecovery.getSessionId() ||
+                        !hasActiveRecoverySession()) {
+                    activateRecovery(pendingRecovery);
+                    recoveryChanged = true;
+                } else {
+                    recoveryRecord = pendingRecovery;
+                }
+            } else if (hasActiveRecoverySession() ||
+                    recoveryState == RecoveryState.LAUNCH_IN_FLIGHT) {
+                deactivateRecovery();
+                recoveryChanged = true;
+            }
         }
 
         // A dispatched launch pauses AppView. If this instance becomes visible again,
@@ -440,16 +901,31 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         if (requireFreshStateAfterLaunch) {
             autoDesktopLaunchPending = false;
             autoDesktopLaunchDispatched = false;
-            beginFreshServerInfoWait();
         }
+
+        inForeground = true;
+        if (recoveryState == RecoveryState.CANCELLED) {
+            updateRecoveryUi();
+            return;
+        }
+
+        if (firstResumePending) {
+            firstResumePending = false;
+            if (recoveryChanged || !updateGenerationPrepared) {
+                prepareForegroundUpdateGeneration(
+                        hasActiveRecoverySession() || requireFreshStateAfterLaunch);
+            }
+        } else {
+            prepareForegroundUpdateGeneration(
+                    hasActiveRecoverySession() || requireFreshStateAfterLaunch);
+        }
+        updateRecoveryUi();
 
         // Display a decoder crash notification if we've returned after a crash
         UiHelper.showDecoderCrashDialog(this);
 
-        inForeground = true;
         startComputerUpdates();
 
-        ExtendedFloatingActionButton profilesButton = findViewById(R.id.profilesButton);
         // User report Samsung and Xiaomi devices have this problem
         // Why just these two brands have the most problems?
         if (profilesButton == null) {
@@ -484,10 +960,24 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     @Override
+    public void onBackPressed() {
+        if (recoveryState != RecoveryState.IDLE &&
+                recoveryState != RecoveryState.BLOCKED_FATAL) {
+            cancelRecovery("back_pressed_active_recovery");
+            return;
+        }
+
+        logRecoveryEvent("back_pressed_normal", recoverySessionId);
+        super.onBackPressed();
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
 
         inForeground = false;
+        activeUpdateGeneration++;
+        updateGenerationPrepared = false;
         stopComputerUpdates();
     }
 
@@ -693,18 +1183,99 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     @MainThread
-    private void handleComputerUpdateOnMainThread(ComputerDetails details, List<NvApp> parsedAppList) {
-        if (details.state != ComputerDetails.State.ONLINE ||
-                details.pairState != PairingManager.PairState.PAIRED) {
-            // UNKNOWN may update the visible running marker, but it is not fresh
-            // server information and must never release the auto-launch gate.
-            updateUiWithServerinfo(details);
+    private void handleComputerUpdateOnMainThread(
+            ComputerDetails details,
+            List<NvApp> parsedAppList,
+            ComputerManagerService.AppListSnapshot appListSnapshot) {
+        if (details.state == ComputerDetails.State.OFFLINE) {
+            if (!hasActiveRecoverySession() &&
+                    reactivatePendingRecoveryFromHostCallback(
+                            "offline_callback_pending_reactivated")) {
+                return;
+            }
+
+            if (hasActiveRecoverySession()) {
+                waitForRecoveryHost();
+                return;
+            }
+
+            Toast.makeText(
+                    AppView.this,
+                    R.string.lost_connection,
+                    Toast.LENGTH_SHORT).show();
+            finishWithRecoveryLog("ordinary_offline_callback");
             return;
         }
 
+        if (details.state == ComputerDetails.State.UNKNOWN) {
+            if (!hasActiveRecoverySession() &&
+                    reactivatePendingRecoveryFromHostCallback(
+                            "unknown_callback_pending_reactivated")) {
+                return;
+            }
+
+            if (hasActiveRecoverySession()) {
+                waitForRecoveryHost();
+            } else {
+                // Preserve the ordinary UNKNOWN running-marker behavior.
+                updateUiWithServerinfo(details);
+            }
+            return;
+        }
+
+        if (details.state == ComputerDetails.State.ONLINE &&
+                details.pairState != PairingManager.PairState.PAIRED) {
+            shortcutHelper.disableComputerShortcut(
+                    details,
+                    getResources().getString(R.string.scut_not_paired));
+
+            if (!hasActiveRecoverySession()) {
+                StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                        loadPendingRecoveryForThisView();
+                if (pendingRecovery != null) {
+                    activateRecovery(pendingRecovery);
+                }
+            }
+
+            if (hasActiveRecoverySession()) {
+                stopRecoveryWithMessage(
+                        R.string.stream_recovery_host_unpaired,
+                        "appview_host_unpaired");
+            } else {
+                Toast.makeText(
+                        AppView.this,
+                        R.string.scut_not_paired,
+                        Toast.LENGTH_SHORT).show();
+                finishWithRecoveryLog("ordinary_host_unpaired");
+            }
+            return;
+        }
+
+        if (details.state != ComputerDetails.State.ONLINE ||
+                details.pairState != PairingManager.PairState.PAIRED) {
+            // Any future non-ONLINE state is not fresh server information and
+            // must never release the auto-launch gate.
+            if (!hasActiveRecoverySession()) {
+                updateUiWithServerinfo(details);
+            }
+            return;
+        }
+
+        boolean firstFreshServerInfoForGeneration =
+                !receivedServerInfo || requireFreshServerInfo;
         receivedServerInfo = true;
         requireFreshServerInfo = false;
         lastRunningAppId = details.runningGameId;
+        freshRunningAppId = details.runningGameId;
+        freshRunningAppUuid = details.runningGameUUID;
+
+        if (hasActiveRecoverySession() &&
+                firstFreshServerInfoForGeneration && poller != null) {
+            // A previous foreground generation may have completed an app-list fetch,
+            // which normally moves the poller to its long interval. Request a new one
+            // immediately now that this generation has fresh server information.
+            poller.pollNow();
+        }
 
         boolean appListChanged = details.rawAppList != null &&
                 !details.rawAppList.equals(lastRawApplist);
@@ -725,9 +1296,27 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
             }
         }
 
-        updateUiWithServerinfo(details);
+        if (!hasActiveRecoverySession()) {
+            updateUiWithServerinfo(details);
+        }
 
-        if (appListReady) {
+        if (appListSnapshot != null &&
+                appListSnapshot.getGeneration() > requiredAppListSuccessGeneration) {
+            receivedFreshAppList = true;
+            freshAppListSnapshot = appListSnapshot;
+        }
+
+        if (hasActiveRecoverySession()) {
+            if (!receivedFreshAppList || freshAppListSnapshot == null) {
+                recoveryState = RecoveryState.WAITING_FOR_FRESH_APP_LIST;
+                updateRecoveryUi();
+                return;
+            }
+
+            coordinateRecoveryLaunch(freshAppListSnapshot.getApps());
+        } else if (appListReady) {
+            // Preserve the ordinary, non-recovery coordinator behavior. Only recovery
+            // requires the new app-list success-generation latch.
             coordinateAutoDesktopLaunch();
         }
     }
@@ -770,11 +1359,184 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     }
 
     private boolean isDesktopApp(NvApp app) {
-        String name = app.getAppName();
+        return app != null && isDesktopName(app.getAppName());
+    }
+
+    private boolean isDesktopName(String name) {
         if (name == null) return false;
 
         name = name.trim();
         return name.equalsIgnoreCase("Desktop") || name.equals("桌面");
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private boolean namesMatch(String first, String second) {
+        return hasText(first) && hasText(second) &&
+                first.trim().equalsIgnoreCase(second.trim());
+    }
+
+    private boolean uuidsMatch(String first, String second) {
+        return hasText(first) && hasText(second) &&
+                first.trim().equalsIgnoreCase(second.trim());
+    }
+
+    private NvApp resolveRecoveryTarget(List<NvApp> freshApps) {
+        if (recoveryRecord == null || freshApps == null) {
+            return null;
+        }
+
+        String targetUuid = recoveryRecord.getAppUuid();
+        if (hasText(targetUuid)) {
+            NvApp uuidMatch = null;
+            for (NvApp app : freshApps) {
+                if (uuidsMatch(targetUuid, app.getAppUUID())) {
+                    if (uuidMatch != null) {
+                        return null;
+                    }
+                    uuidMatch = app;
+                }
+            }
+            if (uuidMatch != null) {
+                return uuidMatch;
+            }
+        }
+
+        int targetAppId = recoveryRecord.getAppId();
+        String targetName = recoveryRecord.getAppName();
+        if (targetAppId > 0 && hasText(targetName)) {
+            NvApp idAndNameMatch = null;
+            for (NvApp app : freshApps) {
+                if (app.getAppId() == targetAppId &&
+                        namesMatch(targetName, app.getAppName())) {
+                    if (idAndNameMatch != null) {
+                        return null;
+                    }
+                    idAndNameMatch = app;
+                }
+            }
+            if (idAndNameMatch != null) {
+                return idAndNameMatch;
+            }
+        }
+
+        if (hasText(targetName)) {
+            NvApp uniqueNameMatch = null;
+            for (NvApp app : freshApps) {
+                if (namesMatch(targetName, app.getAppName())) {
+                    if (uniqueNameMatch != null) {
+                        return null;
+                    }
+                    uniqueNameMatch = app;
+                }
+            }
+            if (uniqueNameMatch != null) {
+                return uniqueNameMatch;
+            }
+        }
+
+        // Only a token that originally targeted Desktop may use the localized
+        // Desktop-name fallback after a host configuration change.
+        if (isDesktopName(targetName)) {
+            NvApp uniqueDesktopMatch = null;
+            for (NvApp app : freshApps) {
+                if (isDesktopApp(app)) {
+                    if (uniqueDesktopMatch != null) {
+                        return null;
+                    }
+                    uniqueDesktopMatch = app;
+                }
+            }
+            return uniqueDesktopMatch;
+        }
+
+        return null;
+    }
+
+    @MainThread
+    private void coordinateRecoveryLaunch(List<NvApp> freshApps) {
+        if (!hasActiveRecoverySession() ||
+                recoveryState == RecoveryState.LAUNCH_IN_FLIGHT ||
+                !receivedServerInfo || requireFreshServerInfo ||
+                !receivedFreshAppList || freshAppListSnapshot == null ||
+                fatalAutoDesktopLaunchBlocked || Game.terminatedByUser) {
+            return;
+        }
+
+        NvApp targetApp = resolveRecoveryTarget(freshApps);
+        if (targetApp == null) {
+            stopRecoveryWithMessage(
+                    R.string.stream_recovery_target_missing,
+                    "appview_target_missing");
+            return;
+        }
+
+        boolean hasRunningApp = freshRunningAppId != 0 ||
+                hasText(freshRunningAppUuid);
+        boolean runningTarget;
+        if (hasText(freshRunningAppUuid) && hasText(targetApp.getAppUUID())) {
+            runningTarget = uuidsMatch(
+                    freshRunningAppUuid,
+                    targetApp.getAppUUID());
+        } else {
+            runningTarget = freshRunningAppId != 0 &&
+                    freshRunningAppId == targetApp.getAppId();
+        }
+
+        if (hasRunningApp && !runningTarget) {
+            stopRecoveryWithMessage(
+                    R.string.stream_recovery_other_app_running,
+                    "appview_other_app_running");
+            return;
+        }
+
+        recoveryState = RecoveryState.READY_TO_LAUNCH;
+        updateRecoveryUi();
+        dispatchRecoveryLaunch(targetApp);
+    }
+
+    @MainThread
+    private void dispatchRecoveryLaunch(NvApp targetApp) {
+        if (!hasActiveRecoverySession() ||
+                recoveryState == RecoveryState.LAUNCH_IN_FLIGHT ||
+                !inForeground || managerBinder == null || computer == null ||
+                computer.state != ComputerDetails.State.ONLINE ||
+                computer.pairState != PairingManager.PairState.PAIRED ||
+                computer.activeAddress == null || !receivedServerInfo ||
+                requireFreshServerInfo || !receivedFreshAppList ||
+                fatalAutoDesktopLaunchBlocked) {
+            return;
+        }
+
+        long sessionId = recoverySessionId;
+        if (!StreamRecoveryStore.markLaunchInFlight(this, sessionId)) {
+            stopRecoveryWithMessage(
+                    R.string.stream_recovery_already_attempted,
+                    "appview_launch_already_attempted");
+            return;
+        }
+
+        boolean withVirtualDisplay = recoveryRecord.isWithVirtualDisplay();
+        recoveryState = RecoveryState.LAUNCH_IN_FLIGHT;
+        autoDesktopLaunchPending = true;
+        autoDesktopLaunchDispatched = true;
+        updateRecoveryUi();
+        boolean started = ServerHelper.doStart(
+                AppView.this,
+                targetApp,
+                computer,
+                managerBinder,
+                withVirtualDisplay,
+                sessionId);
+        if (!started) {
+            autoDesktopLaunchPending = false;
+            autoDesktopLaunchDispatched = false;
+            stopRecoveryWithMessage(
+                    R.string.stream_recovery_host_unavailable,
+                    "appview_host_unavailable_before_launch");
+        }
     }
 
     @MainThread
@@ -782,6 +1544,10 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         // Reaching this method means the user completed any required confirmation and
         // is starting a new attempt. Automatic launches never pass through this method.
         fatalAutoDesktopLaunchBlocked = false;
+        if (recoveryState == RecoveryState.BLOCKED_FATAL) {
+            recoveryState = RecoveryState.IDLE;
+            updateRecoveryUi();
+        }
         ServerHelper.doStart(AppView.this, app, computer, managerBinder, withVirtualDisplay);
     }
 
@@ -789,7 +1555,8 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private void coordinateAutoDesktopLaunch() {
         if (computer == null || computer.state != ComputerDetails.State.ONLINE ||
                 computer.pairState != PairingManager.PairState.PAIRED ||
-                !receivedServerInfo || requireFreshServerInfo || autoDesktopLaunchPending ||
+                !receivedServerInfo || requireFreshServerInfo ||
+                autoDesktopLaunchPending || hasActiveRecoverySession() ||
                 autoDesktopConfirmationCancelled || fatalAutoDesktopLaunchBlocked ||
                 Game.terminatedByUser) {
             return;
@@ -818,16 +1585,25 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         if (prefConfig.useVirtualDisplay &&
                 !(computer.vDisplaySupported && computer.vDisplayDriverReady)) {
             final NvApp finalDesktopApp = desktopApp;
+            final long confirmationGeneration = activeUpdateGeneration;
             autoDesktopLaunchPending = true;
             autoDesktopConfirmationPending = true;
             UiHelper.displayVdisplayConfirmationDialog(
                     AppView.this,
                     computer,
                     () -> {
+                        if (!inForeground ||
+                                confirmationGeneration != activeUpdateGeneration ||
+                                hasActiveRecoverySession()) {
+                            return;
+                        }
                         autoDesktopConfirmationPending = false;
                         dispatchAutoDesktopLaunch(finalDesktopApp, true);
                     },
                     () -> {
+                        if (confirmationGeneration != activeUpdateGeneration) {
+                            return;
+                        }
                         autoDesktopConfirmationPending = false;
                         autoDesktopLaunchPending = false;
                         autoDesktopConfirmationCancelled = true;
@@ -840,10 +1616,12 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
 
     @MainThread
     private void dispatchAutoDesktopLaunch(NvApp desktopApp, boolean withVirtualDisplay) {
-        if (fatalAutoDesktopLaunchBlocked || managerBinder == null || computer == null ||
+        if (!inForeground || fatalAutoDesktopLaunchBlocked ||
+                hasActiveRecoverySession() || managerBinder == null || computer == null ||
                 computer.state != ComputerDetails.State.ONLINE ||
                 computer.pairState != PairingManager.PairState.PAIRED ||
-                !receivedServerInfo || requireFreshServerInfo || computer.activeAddress == null) {
+                !receivedServerInfo || requireFreshServerInfo ||
+                computer.activeAddress == null) {
             autoDesktopLaunchPending = false;
             autoDesktopLaunchDispatched = false;
             return;

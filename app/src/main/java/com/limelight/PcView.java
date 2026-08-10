@@ -78,6 +78,11 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
     private boolean autoConnectAttemptedThisLaunch = false;
     private boolean autoConnectTriggeredThisLaunch = false;
+    private long recoveryRedirectSessionId = StreamRecoveryStore.NO_SESSION_ID;
+    private String recoveryRedirectComputerUuid;
+    private boolean recoveryRedirectInFlight;
+    private boolean recoveryRedirectObservedPause;
+    private String recoveryRedirectLastBlockedReason;
     private ComputerDetails.AddressTuple pendingPairingAddress;
     private String pendingPairingPin, pendingPairingPassphrase;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
@@ -94,6 +99,9 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
 
                     // Now make the binder visible
                     managerBinder = localBinder;
+
+                    PcView.this.runOnUiThread(() ->
+                            handlePendingRecoveryRedirect("cms_ready"));
 
                     // Start updates
                     startComputerUpdates();
@@ -267,6 +275,8 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
             pendingPairingPin = null;
             pendingPairingPassphrase = null;
         }
+
+        handlePendingRecoveryRedirect("on_create");
     }
 
     private void completeOnCreate() {
@@ -373,12 +383,23 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     protected void onResume() {
         super.onResume();
 
+        if (recoveryRedirectInFlight && recoveryRedirectObservedPause) {
+            LimeLog.info("Recovery redirect returned to PcView: sessionId=" +
+                    recoveryRedirectSessionId + " computerUuid=" +
+                    recoveryRedirectComputerUuid +
+                    " state=rechecking reason=activity_resumed_after_redirect");
+            recoveryRedirectInFlight = false;
+            recoveryRedirectObservedPause = false;
+            recoveryRedirectLastBlockedReason = null;
+        }
+
         // Display a decoder crash notification if we've returned after a crash
         UiHelper.showDecoderCrashDialog(this);
 
         refreshProfileButton();
 
         inForeground = true;
+        handlePendingRecoveryRedirect("on_resume");
         startComputerUpdates();
     }
 
@@ -387,6 +408,9 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
         super.onPause();
 
         inForeground = false;
+        if (recoveryRedirectInFlight) {
+            recoveryRedirectObservedPause = true;
+        }
         stopComputerUpdates(false);
     }
 
@@ -571,7 +595,7 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
 
                         if (toastSuccess) {
                             // Open the app list after a successful pairing attempt
-                            doAppList(computer, true, false);
+                            doAppListForExplicitSelection(computer, true, false);
                         }
                         else {
                             // Start polling again if we're still in the foreground
@@ -713,8 +737,203 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
         }).start();
     }
 
+    /**
+     * Handles recovery navigation independently from the ordinary auto-Desktop path.
+     *
+     * @return true if a valid pending recovery exists, even if its computer has not
+     *         appeared yet. Callers use this to suppress ordinary auto-connect while
+     *         recovery owns navigation.
+     */
+    private boolean handlePendingRecoveryRedirect(String trigger) {
+        StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                StreamRecoveryStore.loadPendingRecovery(this);
+        if (pendingRecovery == null) {
+            resetRecoveryRedirectGate("no_pending_token");
+            return false;
+        }
+
+        synchronizeRecoveryRedirectGate(pendingRecovery, trigger);
+
+        if (!inForeground || isFinishing() ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 &&
+                        isDestroyed())) {
+            logRecoveryRedirectBlockedOnce(
+                    pendingRecovery, "activity_not_foreground", "unavailable");
+            return true;
+        }
+
+        ComputerDetails recoveryComputer =
+                findComputerForRecovery(pendingRecovery.getComputerUuid());
+        if (recoveryComputer == null) {
+            logRecoveryRedirectBlockedOnce(
+                    pendingRecovery, "matching_computer_not_available", "missing");
+            return true;
+        }
+
+        if (recoveryRedirectInFlight) {
+            logRecoveryRedirectBlockedOnce(
+                    pendingRecovery, "redirect_already_in_flight",
+                    String.valueOf(recoveryComputer.state));
+            return true;
+        }
+
+        dispatchRecoveryRedirect(pendingRecovery, recoveryComputer, trigger);
+        return true;
+    }
+
+    private void synchronizeRecoveryRedirectGate(
+            StreamRecoveryStore.RecoveryRecord pendingRecovery,
+            String trigger) {
+        if (recoveryRedirectSessionId == pendingRecovery.getSessionId()) {
+            return;
+        }
+
+        recoveryRedirectSessionId = pendingRecovery.getSessionId();
+        recoveryRedirectComputerUuid = pendingRecovery.getComputerUuid();
+        recoveryRedirectInFlight = false;
+        recoveryRedirectObservedPause = false;
+        recoveryRedirectLastBlockedReason = null;
+
+        LimeLog.info("Recovery session discovered in PcView: sessionId=" +
+                recoveryRedirectSessionId + " computerUuid=" +
+                recoveryRedirectComputerUuid +
+                " state=pending reason=" + trigger);
+    }
+
+    private ComputerDetails findComputerForRecovery(String computerUuid) {
+        if (computerUuid == null || managerBinder == null) {
+            return null;
+        }
+
+        // CMS is authoritative for host membership. Avoid redirecting from a stale
+        // grid row while a restarted service is still rebuilding its computer list,
+        // which could otherwise bounce between PcView and an AppView that cannot
+        // resolve the host.
+        return managerBinder.getComputer(computerUuid);
+    }
+
+    private void dispatchRecoveryRedirect(
+            StreamRecoveryStore.RecoveryRecord pendingRecovery,
+            ComputerDetails recoveryComputer,
+            String reason) {
+        recoveryRedirectSessionId = pendingRecovery.getSessionId();
+        recoveryRedirectComputerUuid = pendingRecovery.getComputerUuid();
+        recoveryRedirectInFlight = true;
+        recoveryRedirectObservedPause = false;
+        recoveryRedirectLastBlockedReason = null;
+
+        Intent intent = new Intent(this, AppView.class);
+        intent.putExtra(AppView.NAME_EXTRA, recoveryComputer.name);
+        intent.putExtra(AppView.UUID_EXTRA, recoveryComputer.uuid);
+        intent.putExtra(Game.EXTRA_RECOVERY_SESSION_ID,
+                pendingRecovery.getSessionId());
+
+        LimeLog.info("Redirecting pending recovery to AppView: sessionId=" +
+                pendingRecovery.getSessionId() + " computerUuid=" +
+                pendingRecovery.getComputerUuid() + " state=" +
+                recoveryComputer.state + " reason=" + reason);
+
+        startActivity(intent);
+    }
+
+    /**
+     * Handles an explicit user request to enter a computer. Selecting the recovery
+     * computer continues through the guarded recovery AppView path. Selecting another
+     * computer cancels only the exact pending session before continuing normally.
+     */
+    private boolean handleExplicitComputerEntry(
+            ComputerDetails selectedComputer,
+            String reason) {
+        StreamRecoveryStore.RecoveryRecord pendingRecovery =
+                StreamRecoveryStore.loadPendingRecovery(this);
+        if (pendingRecovery == null) {
+            resetRecoveryRedirectGate("no_pending_token");
+            return false;
+        }
+
+        synchronizeRecoveryRedirectGate(pendingRecovery, reason);
+
+        if (selectedComputer != null && selectedComputer.uuid != null &&
+                pendingRecovery.getComputerUuid().equalsIgnoreCase(
+                        selectedComputer.uuid)) {
+            if (!recoveryRedirectInFlight) {
+                dispatchRecoveryRedirect(
+                        pendingRecovery, selectedComputer, reason);
+            } else {
+                logRecoveryRedirectBlockedOnce(
+                        pendingRecovery, "redirect_already_in_flight",
+                        String.valueOf(selectedComputer.state));
+            }
+            return true;
+        }
+
+        boolean cleared = StreamRecoveryStore.clearIfSessionMatches(
+                this,
+                pendingRecovery.getSessionId(),
+                "pcview_explicit_other_computer");
+        LimeLog.info("Explicit computer selection handled pending recovery: sessionId=" +
+                pendingRecovery.getSessionId() + " computerUuid=" +
+                pendingRecovery.getComputerUuid() + " state=" +
+                (cleared ? "cancelled" : "unchanged") +
+                " reason=" + reason);
+
+        if (cleared) {
+            clearRecoveryRedirectGate();
+            return false;
+        }
+
+        // A concurrent session replacement must not be routed through this stale
+        // decision. Keep the user in PcView until the current token is re-evaluated.
+        handlePendingRecoveryRedirect("explicit_selection_session_changed");
+        return true;
+    }
+
+    private void logRecoveryRedirectBlockedOnce(
+            StreamRecoveryStore.RecoveryRecord pendingRecovery,
+            String reason,
+            String state) {
+        String signature = reason + ":" + state;
+        if (signature.equals(recoveryRedirectLastBlockedReason)) {
+            return;
+        }
+
+        recoveryRedirectLastBlockedReason = signature;
+        LimeLog.info("Recovery redirect deferred in PcView: sessionId=" +
+                pendingRecovery.getSessionId() + " computerUuid=" +
+                pendingRecovery.getComputerUuid() + " state=" + state +
+                " reason=" + reason);
+    }
+
+    private void resetRecoveryRedirectGate(String reason) {
+        if (recoveryRedirectSessionId != StreamRecoveryStore.NO_SESSION_ID) {
+            LimeLog.info("Recovery redirect reset in PcView: sessionId=" +
+                    recoveryRedirectSessionId + " computerUuid=" +
+                    recoveryRedirectComputerUuid +
+                    " state=inactive reason=" + reason);
+        }
+        clearRecoveryRedirectGate();
+    }
+
+    private void clearRecoveryRedirectGate() {
+        recoveryRedirectSessionId = StreamRecoveryStore.NO_SESSION_ID;
+        recoveryRedirectComputerUuid = null;
+        recoveryRedirectInFlight = false;
+        recoveryRedirectObservedPause = false;
+        recoveryRedirectLastBlockedReason = null;
+    }
+
     private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames) {
         doAppList(computer, newlyPaired, showHiddenGames, false);
+    }
+
+    private void doAppListForExplicitSelection(ComputerDetails computer,
+                                               boolean newlyPaired,
+                                               boolean showHiddenGames) {
+        if (handleExplicitComputerEntry(computer, "explicit_app_list")) {
+            return;
+        }
+
+        doAppList(computer, newlyPaired, showHiddenGames);
     }
 
     private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames, boolean autoStartDesktopStream) {
@@ -777,12 +996,17 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
                 return true;
 
             case FULL_APP_LIST_ID:
-                doAppList(computer.details, false, true);
+                doAppListForExplicitSelection(computer.details, false, true);
                 return true;
 
             case RESUME_ID:
                 if (managerBinder == null) {
                     Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+                    return true;
+                }
+
+                if (handleExplicitComputerEntry(
+                        computer.details, "explicit_resume_session")) {
                     return true;
                 }
 
@@ -890,7 +1114,9 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
         // Notify the view that the data has changed
         pcGridAdapter.notifyDataSetChanged();
 
-        tryAutoConnectDesktopStreamOnce();
+        if (!handlePendingRecoveryRedirect("computer_update")) {
+            tryAutoConnectDesktopStreamOnce();
+        }
     }
 
     private void tryAutoConnectDesktopStreamOnce() {
@@ -939,7 +1165,8 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
                     // Pair an unpaired machine by default
                     doPair(computer.details, null, null);
                 } else {
-                    doAppList(computer.details, false, false);
+                    doAppListForExplicitSelection(
+                            computer.details, false, false);
                 }
             }
         });

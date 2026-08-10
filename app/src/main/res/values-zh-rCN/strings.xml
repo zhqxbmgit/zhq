@@ -118,6 +118,19 @@
     <!-- AppList activity -->
     <string name="toast_no_logs">还没有统计过性能数据</string>
     <string name="applist_connect_msg"> 正在连接电脑…… </string>
+    <string name="stream_recovery_title">连接中断</string>
+    <string name="stream_recovery_message">正在等待 Sunshine 或主机恢复。主机重新上线后将自动恢复串流。</string>
+    <string name="stream_recovery_waiting_for_host">正在等待 Sunshine 或主机…</string>
+    <string name="stream_recovery_waiting_for_fresh_server_info">正在获取主机最新状态…</string>
+    <string name="stream_recovery_waiting_for_fresh_app_list">正在从主机刷新应用列表…</string>
+    <string name="stream_recovery_ready_to_launch">正在准备恢复之前的串流…</string>
+    <string name="stream_recovery_launch_in_flight">正在恢复之前的串流…</string>
+    <string name="stream_recovery_host_unpaired">主机已取消配对，已停止自动恢复。</string>
+    <string name="stream_recovery_host_unavailable">主机在串流启动前再次离线，已停止自动恢复。</string>
+    <string name="stream_recovery_target_missing">原应用已不存在，已停止自动恢复。</string>
+    <string name="stream_recovery_other_app_running">主机正在运行其他应用，已停止自动恢复。</string>
+    <string name="stream_recovery_already_attempted">本次恢复已经执行过启动尝试，已停止自动恢复。</string>
+    <string name="stream_recovery_cancel">取消恢复</string>
     <string name="applist_menu_resume"> 恢复串流 </string>
     <string name="applist_menu_start_vdisplay"> 在虚拟显示器中启动 </string>
     <string name="applist_menu_start_primarydisplay"> 在主显示器中启动 </string>

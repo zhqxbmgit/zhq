@@ -15,6 +15,7 @@ import com.limelight.Game;
 import com.limelight.LimeLog;
 import com.limelight.R;
 import com.limelight.ShortcutTrampoline;
+import com.limelight.StreamRecoveryStore;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -93,6 +94,14 @@ public class ServerHelper {
     public static Intent createStartIntent(Activity parent, NvApp app, ComputerDetails computer,
                                            ComputerManagerService.ComputerManagerBinder managerBinder,
                                            boolean withVDisplay) {
+        return createStartIntent(parent, app, computer, managerBinder, withVDisplay,
+                StreamRecoveryStore.NO_SESSION_ID);
+    }
+
+    public static Intent createStartIntent(Activity parent, NvApp app, ComputerDetails computer,
+                                           ComputerManagerService.ComputerManagerBinder managerBinder,
+                                           boolean withVDisplay,
+                                           long recoverySessionId) {
         Intent gameIntent = null;
         PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(parent);
         // Try to add secondary DisplayContext if supported and connected
@@ -102,17 +111,31 @@ public class ServerHelper {
             gameIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         }
         if(gameIntent == null) gameIntent = new Intent(parent, Game.class);
+
+        String appUuid = app.getAppUUID();
+        if ((appUuid == null || appUuid.isEmpty()) &&
+                computer.runningGameId != 0 &&
+                app.getAppId() == computer.runningGameId &&
+                computer.runningGameUUID != null &&
+                !computer.runningGameUUID.isEmpty()) {
+            // PcView and ShortcutTrampoline use a placeholder NvApp when resuming
+            // the host's current application. Preserve its real UUID so a later
+            // recovery can resolve the target from a refreshed application list.
+            appUuid = computer.runningGameUUID;
+        }
+
         gameIntent.putExtra(Game.EXTRA_HOST, computer.activeAddress.address);
         gameIntent.putExtra(Game.EXTRA_PORT, computer.activeAddress.port);
         gameIntent.putExtra(Game.EXTRA_HTTPS_PORT, computer.httpsPort);
         gameIntent.putExtra(Game.EXTRA_APP_NAME, app.getAppName());
-        gameIntent.putExtra(Game.EXTRA_APP_UUID, app.getAppUUID());
+        gameIntent.putExtra(Game.EXTRA_APP_UUID, appUuid);
         gameIntent.putExtra(Game.EXTRA_APP_ID, app.getAppId());
         gameIntent.putExtra(Game.EXTRA_APP_HDR, app.isHdrSupported());
         gameIntent.putExtra(Game.EXTRA_UNIQUEID, managerBinder.getUniqueId());
         gameIntent.putExtra(Game.EXTRA_PC_UUID, computer.uuid);
         gameIntent.putExtra(Game.EXTRA_PC_NAME, computer.name);
         gameIntent.putExtra(Game.EXTRA_VDISPLAY, withVDisplay);
+        gameIntent.putExtra(Game.EXTRA_RECOVERY_SESSION_ID, recoverySessionId);
         gameIntent.putExtra(Game.EXTRA_SERVER_COMMANDS, (ArrayList<String>) computer.serverCommands);
 
         try {
@@ -145,13 +168,28 @@ public class ServerHelper {
             ComputerManagerService.ComputerManagerBinder managerBinder,
             boolean withVDisplay
     ) {
+        doStart(parent, app, computer, managerBinder, withVDisplay,
+                StreamRecoveryStore.NO_SESSION_ID);
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.O)
+    public static boolean doStart(
+            Activity parent,
+            NvApp app,
+            ComputerDetails computer,
+            ComputerManagerService.ComputerManagerBinder managerBinder,
+            boolean withVDisplay,
+            long recoverySessionId
+    ) {
         if (computer.state == ComputerDetails.State.OFFLINE || computer.activeAddress == null) {
             Toast.makeText(parent, parent.getString(R.string.pair_pc_offline), Toast.LENGTH_SHORT).show();
-            return;
+            return false;
         }
 
-        Intent intent = createStartIntent(parent, app, computer, managerBinder, withVDisplay);
+        Intent intent = createStartIntent(parent, app, computer, managerBinder,
+                withVDisplay, recoverySessionId);
         parent.startActivity(intent);
+        return true;
     }
 
     public static void doNetworkTest(final Activity parent) {

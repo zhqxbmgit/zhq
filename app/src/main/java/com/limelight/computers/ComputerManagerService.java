@@ -6,6 +6,8 @@ import java.io.StringReader;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -796,40 +798,128 @@ public class ComputerManagerService extends Service {
         return binder;
     }
 
+    public static final class AppListSnapshot {
+        private final long generation;
+        private final List<NvApp> apps;
+
+        private AppListSnapshot(long generation, List<NvApp> apps) {
+            this.generation = generation;
+            this.apps = deepCopyApps(apps);
+        }
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        public List<NvApp> getApps() {
+            // NvApp is mutable, so return another detached copy to keep the
+            // stored snapshot stable even if a caller modifies an entry.
+            return deepCopyApps(apps);
+        }
+
+        private static List<NvApp> deepCopyApps(List<NvApp> apps) {
+            List<NvApp> copies = new ArrayList<>(apps.size());
+            for (NvApp app : apps) {
+                NvApp copy = new NvApp(app.getAppName(), app.getAppUUID(),
+                        app.getAppId(), app.isHdrSupported());
+                copy.setAppIndex(app.getAppIndex());
+                copies.add(copy);
+            }
+            return Collections.unmodifiableList(copies);
+        }
+    }
+
     public class ApplistPoller {
-        private Thread thread;
         private final ComputerDetails computer;
-        private final Object pollEvent = new Object();
-        private boolean receivedAppList = false;
+        private final Object runLock = new Object();
+        private PollRun activeRun;
+        private long successGeneration;
+        private AppListSnapshot latestSuccessfulSnapshot;
+
+        private final class PollRun implements Runnable {
+            private final Object pollEvent = new Object();
+            private final Thread thread;
+            private boolean pollRequested;
+            private boolean receivedAppList;
+            private boolean cancelled;
+
+            private PollRun(boolean receivedAppList) {
+                this.receivedAppList = receivedAppList;
+                this.thread = new Thread(this);
+                this.thread.setName("App list polling thread for " + computer.name);
+            }
+
+            @Override
+            public void run() {
+                runPolling(this);
+            }
+        }
 
         public ApplistPoller(ComputerDetails computer) {
             this.computer = computer;
         }
 
         public void pollNow() {
-            synchronized (pollEvent) {
-                pollEvent.notify();
+            synchronized (runLock) {
+                if (activeRun != null) {
+                    synchronized (activeRun.pollEvent) {
+                        activeRun.pollRequested = true;
+                        activeRun.pollEvent.notifyAll();
+                    }
+                }
             }
         }
 
-        private boolean waitPollingDelay() {
+        public long getSuccessGeneration() {
+            synchronized (runLock) {
+                return successGeneration;
+            }
+        }
+
+        public AppListSnapshot getLatestSuccessfulSnapshot() {
+            synchronized (runLock) {
+                return latestSuccessfulSnapshot;
+            }
+        }
+
+        private boolean isCurrentRun(PollRun run) {
+            synchronized (runLock) {
+                return isCurrentRunLocked(run);
+            }
+        }
+
+        private boolean isCurrentRunLocked(PollRun run) {
+            return activeRun == run && !run.cancelled &&
+                    run.thread == Thread.currentThread();
+        }
+
+        private boolean waitPollingDelay(PollRun run) {
+            if (!isCurrentRun(run)) {
+                return false;
+            }
+
             try {
-                synchronized (pollEvent) {
-                    if (receivedAppList) {
-                        // If we've already reported an app list successfully,
-                        // wait the full polling period
-                        pollEvent.wait(APPLIST_POLLING_PERIOD_MS);
+                synchronized (run.pollEvent) {
+                    if (run.pollRequested) {
+                        run.pollRequested = false;
                     }
                     else {
-                        // If we've failed to get an app list so far, retry much earlier
-                        pollEvent.wait(APPLIST_FAILED_POLLING_RETRY_MS);
+                        if (run.receivedAppList) {
+                            // If we've already reported an app list successfully,
+                            // wait the full polling period
+                            run.pollEvent.wait(APPLIST_POLLING_PERIOD_MS);
+                        }
+                        else {
+                            // If we've failed to get an app list so far, retry much earlier
+                            run.pollEvent.wait(APPLIST_FAILED_POLLING_RETRY_MS);
+                        }
                     }
                 }
             } catch (InterruptedException e) {
                 return false;
             }
 
-            return thread != null && !thread.isInterrupted();
+            return isCurrentRun(run) && !run.thread.isInterrupted();
         }
 
         private PollingTuple getPollingTuple(ComputerDetails details) {
@@ -844,102 +934,144 @@ public class ComputerManagerService extends Service {
             return null;
         }
 
-        public void start() {
-            thread = new Thread() {
-                @Override
-                public void run() {
-                    int emptyAppListResponses = 0;
-                    do {
-                        // Can't poll if it's not online or paired
-                        if (computer.state != ComputerDetails.State.ONLINE ||
-                                computer.pairState != PairingManager.PairState.PAIRED) {
-                            if (listener != null) {
-                                listener.notifyComputerUpdated(computer);
-                            }
-                            continue;
-                        }
+        private void notifyComputerUpdatedIfCurrent(PollRun run) {
+            synchronized (runLock) {
+                if (isCurrentRunLocked(run) && listener != null) {
+                    listener.notifyComputerUpdated(computer);
+                }
+            }
+        }
 
-                        // Can't poll if there's no UUID yet
-                        if (computer.uuid == null) {
-                            continue;
-                        }
+        private boolean publishSuccessfulAppList(PollRun run, String rawAppList,
+                                                 List<NvApp> apps) {
+            synchronized (runLock) {
+                if (!isCurrentRunLocked(run)) {
+                    return false;
+                }
 
-                        PollingTuple tuple = getPollingTuple(computer);
+                long nextGeneration = successGeneration + 1;
+                AppListSnapshot snapshot = new AppListSnapshot(nextGeneration, apps);
 
-                        try {
-                            NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort, idManager.getUniqueId(),
-                                    computer.serverCert, PlatformBinding.getCryptoProvider(ComputerManagerService.this));
+                // Keep cache publication inside the run identity lock. stop() may
+                // briefly wait for this local I/O, but once it returns, an obsolete
+                // run cannot write the cache or any shared app-list state.
+                try (final OutputStream cacheOut = CacheHelper.openCacheFileForOutput(
+                        getCacheDir(), "applist", computer.uuid)
+                ) {
+                    CacheHelper.writeStringToOutputStream(cacheOut, rawAppList);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
 
-                            String appList;
-                            if (tuple != null) {
-                                // If we're polling this machine too, grab the network lock
-                                // while doing the app list request to prevent other requests
-                                // from being issued in the meantime.
-                                synchronized (tuple.networkLock) {
-                                    appList = http.getAppListRaw();
-                                }
-                            }
-                            else {
-                                // No polling is happening now, so we just call it directly
+                computer.rawAppList = rawAppList;
+                run.receivedAppList = true;
+                successGeneration = nextGeneration;
+                latestSuccessfulSnapshot = snapshot;
+
+                if (listener != null) {
+                    listener.notifyComputerUpdated(computer);
+                }
+
+                return true;
+            }
+        }
+
+        private void runPolling(PollRun run) {
+            int emptyAppListResponses = 0;
+            try {
+                do {
+                    if (!isCurrentRun(run)) {
+                        break;
+                    }
+
+                    // Can't poll if it's not online or paired
+                    if (computer.state != ComputerDetails.State.ONLINE ||
+                            computer.pairState != PairingManager.PairState.PAIRED) {
+                        notifyComputerUpdatedIfCurrent(run);
+                        continue;
+                    }
+
+                    // Can't poll if there's no UUID yet
+                    if (computer.uuid == null) {
+                        continue;
+                    }
+
+                    PollingTuple tuple = getPollingTuple(computer);
+
+                    try {
+                        NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort, idManager.getUniqueId(),
+                                computer.serverCert, PlatformBinding.getCryptoProvider(ComputerManagerService.this));
+
+                        String appList;
+                        if (tuple != null) {
+                            // If we're polling this machine too, grab the network lock
+                            // while doing the app list request to prevent other requests
+                            // from being issued in the meantime.
+                            synchronized (tuple.networkLock) {
                                 appList = http.getAppListRaw();
                             }
-
-                            List<NvApp> list = NvHTTP.getAppListByReader(new StringReader(appList));
-                            if (list.isEmpty()) {
-                                LimeLog.warning("Empty app list received from "+computer.uuid);
-
-                                // The app list might actually be empty, so if we get an empty response a few times
-                                // in a row, we'll go ahead and believe it.
-                                emptyAppListResponses++;
-                            }
-                            if (!appList.isEmpty() &&
-                                    (!list.isEmpty() || emptyAppListResponses >= EMPTY_LIST_THRESHOLD)) {
-                                // Open the cache file
-                                try (final OutputStream cacheOut = CacheHelper.openCacheFileForOutput(
-                                        getCacheDir(), "applist", computer.uuid)
-                                ) {
-                                    CacheHelper.writeStringToOutputStream(cacheOut, appList);
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
-
-                                // Reset empty count if it wasn't empty this time
-                                if (!list.isEmpty()) {
-                                    emptyAppListResponses = 0;
-                                }
-
-                                // Update the computer
-                                computer.rawAppList = appList;
-                                receivedAppList = true;
-
-                                // Notify that the app list has been updated
-                                // and ensure that the thread is still active
-                                if (listener != null && thread != null) {
-                                    listener.notifyComputerUpdated(computer);
-                                }
-                            }
-                            else if (appList.isEmpty()) {
-                                LimeLog.warning("Null app list received from "+computer.uuid);
-                            }
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        } catch (XmlPullParserException e) {
-                            e.printStackTrace();
                         }
-                    } while (waitPollingDelay());
+                        else {
+                            // No polling is happening now, so we just call it directly
+                            appList = http.getAppListRaw();
+                        }
+
+                        List<NvApp> list = NvHTTP.getAppListByReader(new StringReader(appList));
+                        if (list.isEmpty()) {
+                            LimeLog.warning("Empty app list received from "+computer.uuid);
+
+                            // The app list might actually be empty, so if we get an empty response a few times
+                            // in a row, we'll go ahead and believe it.
+                            emptyAppListResponses++;
+                        }
+                        if (!appList.isEmpty() &&
+                                (!list.isEmpty() || emptyAppListResponses >= EMPTY_LIST_THRESHOLD)) {
+                            if (publishSuccessfulAppList(run, appList, list) && !list.isEmpty()) {
+                                // Reset empty count if it wasn't empty this time
+                                emptyAppListResponses = 0;
+                            }
+                        }
+                        else if (appList.isEmpty()) {
+                            LimeLog.warning("Null app list received from "+computer.uuid);
+                        }
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } catch (XmlPullParserException e) {
+                        e.printStackTrace();
+                    }
+                } while (waitPollingDelay(run));
+            } finally {
+                synchronized (runLock) {
+                    if (activeRun == run) {
+                        activeRun = null;
+                    }
+                    run.cancelled = true;
                 }
-            };
-            thread.setName("App list polling thread for " + computer.name);
-            thread.start();
+            }
+        }
+
+        public void start() {
+            synchronized (runLock) {
+                if (activeRun != null) {
+                    return;
+                }
+
+                PollRun run = new PollRun(latestSuccessfulSnapshot != null);
+                activeRun = run;
+                run.thread.start();
+            }
         }
 
         public void stop() {
-            if (thread != null) {
-                thread.interrupt();
+            synchronized (runLock) {
+                if (activeRun != null) {
+                    PollRun run = activeRun;
+                    activeRun = null;
+                    run.cancelled = true;
+                    run.thread.interrupt();
 
-                // Don't join here because we might be blocked on network I/O
-
-                thread = null;
+                    // Don't join here because we might be blocked on network I/O.
+                }
             }
         }
     }

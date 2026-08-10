@@ -150,6 +150,19 @@
 
     <!-- AppList activity -->
     <string name="applist_connect_msg">Connecting to PC…</string>
+    <string name="stream_recovery_title">Connection interrupted</string>
+    <string name="stream_recovery_message">Waiting for Sunshine or the host PC to recover. Streaming will resume automatically when the host PC comes back online.</string>
+    <string name="stream_recovery_waiting_for_host">Waiting for Sunshine or the host PC…</string>
+    <string name="stream_recovery_waiting_for_fresh_server_info">Checking the latest host PC status…</string>
+    <string name="stream_recovery_waiting_for_fresh_app_list">Refreshing the application list from the host PC…</string>
+    <string name="stream_recovery_ready_to_launch">Preparing to restore the previous stream…</string>
+    <string name="stream_recovery_launch_in_flight">Restoring the previous stream…</string>
+    <string name="stream_recovery_host_unpaired">Automatic recovery stopped because the host PC is no longer paired.</string>
+    <string name="stream_recovery_host_unavailable">Automatic recovery stopped because the host PC became unavailable before the stream could start.</string>
+    <string name="stream_recovery_target_missing">Automatic recovery stopped because the previous application is no longer available.</string>
+    <string name="stream_recovery_other_app_running">Automatic recovery stopped because another application is currently running on the host PC.</string>
+    <string name="stream_recovery_already_attempted">Automatic recovery stopped because this recovery session has already made its launch attempt.</string>
+    <string name="stream_recovery_cancel">Cancel recovery</string>
     <string name="applist_menu_resume">Resume Session</string>
     <string name="applist_menu_start_vdisplay">Start in Virtual Display</string>
     <string name="applist_menu_start_primarydisplay">Start in Primary Display</string>
