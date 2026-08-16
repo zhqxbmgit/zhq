@@ -19,7 +19,7 @@ Stable Baseline v1
 Development status:
 
 ```text
-Long-term development
+Established-stream recovery verified; candidate-expiry audit boundary fixed
 ```
 
 ---
@@ -175,7 +175,8 @@ Priority:
 P0
 ```
 
-AppView automatic Desktop state machine
+Retain regression coverage for established-stream recovery, including the atomic
+candidate-expiry ordinary-auto suppression boundary.
 
 ---
 
@@ -285,6 +286,10 @@ Completed:
 - SlideButton long-press takeover fix
 - Auto Desktop setting
 - Desktop auto resume
+- Established-stream host interruption recovery for reboot, power loss, and Sunshine interruption
+- Same-host fresh-serverinfo failure/recovery promotion path
+- 30-second recovery CONNECTED_GUARD and B02 loop prevention
+- Same-host candidate-expiry tombstone preventing stale ordinary auto-Desktop relaunch
 - Batch 1 stability fixes
 - Development documentation
 
@@ -292,13 +297,17 @@ Completed:
 
 # Known Issues
 
-Highest priority:
+Resolved recovery audit boundary:
 
 ```text
-AppView automatic Desktop state coordination
+Graceful candidate natural expiry no longer revives ordinary auto Desktop
 ```
 
-Needs continued verification and optimization.
+Candidate removal and same-host ordinary-auto suppression creation are one atomic Store
+transition. Both AppView admission gates and PcView matching-host auto-entry honor the
+tombstone. Explicit App launch and well-defined new stream/recovery transitions clear or
+replace it. Deterministic Store tests cover the greater-than-TTL boundary without waiting
+60 seconds.
 
 ---
 

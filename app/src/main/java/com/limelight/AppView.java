@@ -320,6 +320,55 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                             appListSnapshot);
                 });
             }
+
+            @Override
+            public void notifyComputerServerInfoUnavailable(
+                    final String computerUuid,
+                    final long observedAt) {
+                if (suspendGridUpdates || computerUuid == null ||
+                        !computerUuid.equalsIgnoreCase(uuidString)) {
+                    return;
+                }
+
+                StreamRecoveryStore
+                        .markGracefulHostLossCandidateServiceUnavailable(
+                                AppView.this,
+                                computerUuid,
+                                observedAt);
+            }
+
+            @Override
+            public void notifyComputerServerInfoAvailable(
+                    final String computerUuid,
+                    final long observedAt) {
+                if (computerUuid == null ||
+                        !computerUuid.equalsIgnoreCase(uuidString)) {
+                    return;
+                }
+
+                StreamRecoveryStore.GracefulHostLossCandidate candidate =
+                        StreamRecoveryStore.getGracefulHostLossCandidate(
+                                AppView.this,
+                                computerUuid);
+                if (candidate == null ||
+                        candidate.getServiceLossObservedAt() <= 0 ||
+                        observedAt < candidate.getServiceLossObservedAt() ||
+                        observedAt < candidate.getCreatedAt()) {
+                    return;
+                }
+
+                AppView.this.runOnUiThread(() -> {
+                    if (suspendGridUpdates ||
+                            !isCurrentUpdateCallback(
+                                    callbackGeneration,
+                                    callbackSessionId)) {
+                        return;
+                    }
+
+                    promoteGracefulCandidateFromServiceRecoveryCallback(
+                            observedAt);
+                });
+            }
         });
 
         poller.start();
@@ -389,6 +438,10 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         }
 
         if (fatalAutoDesktopLaunchBlocked) {
+            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                    this,
+                    uuidString,
+                    "appview_saved_b02_block");
             if (pendingRecovery != null) {
                 StreamRecoveryStore.clearIfSessionMatches(
                         this,
@@ -536,6 +589,69 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
             return false;
         }
 
+        activateRecoveryFromHostCallback(pendingRecovery, reason);
+        return true;
+    }
+
+    @MainThread
+    private boolean promoteGracefulCandidateFromOfflineCallback() {
+        if (fatalAutoDesktopLaunchBlocked ||
+                recoveryState == RecoveryState.BLOCKED_FATAL ||
+                Game.terminatedByUser) {
+            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                    this,
+                    uuidString,
+                    "recovery_blocked");
+            return false;
+        }
+
+        StreamRecoveryStore.RecoveryRecord promotedRecovery =
+                StreamRecoveryStore.promoteGracefulHostLossCandidate(
+                        this,
+                        uuidString);
+        if (promotedRecovery == null) {
+            return false;
+        }
+
+        activateRecoveryFromHostCallback(
+                promotedRecovery,
+                "offline_callback_candidate_promoted");
+        return true;
+    }
+
+    @MainThread
+    private boolean promoteGracefulCandidateFromServiceRecoveryCallback(
+            long serviceRecoveredAt) {
+        if (fatalAutoDesktopLaunchBlocked ||
+                recoveryState == RecoveryState.BLOCKED_FATAL ||
+                Game.terminatedByUser) {
+            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                    this,
+                    uuidString,
+                    "recovery_blocked");
+            return false;
+        }
+
+        StreamRecoveryStore.RecoveryRecord promotedRecovery =
+                StreamRecoveryStore
+                        .promoteGracefulHostLossCandidateAfterServiceRecovery(
+                                this,
+                                uuidString,
+                                serviceRecoveredAt);
+        if (promotedRecovery == null) {
+            return false;
+        }
+
+        activateRecoveryFromHostCallback(
+                promotedRecovery,
+                "service_recovery_callback_candidate_promoted");
+        return true;
+    }
+
+    @MainThread
+    private void activateRecoveryFromHostCallback(
+            StreamRecoveryStore.RecoveryRecord pendingRecovery,
+            String reason) {
         activateRecovery(pendingRecovery);
         logRecoveryEvent(reason, pendingRecovery.getSessionId());
 
@@ -549,7 +665,6 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
         recoveryState = RecoveryState.WAITING_FOR_HOST;
         updateRecoveryUi();
         startComputerUpdates();
-        return true;
     }
 
     @MainThread
@@ -698,6 +813,10 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     @MainThread
     private void blockRecoveryForFatalTermination(long fatalRecoverySessionId,
                                                    long pendingRecoverySessionId) {
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                uuidString,
+                "appview_b02_fatal");
         if (fatalRecoverySessionId != StreamRecoveryStore.NO_SESSION_ID) {
             StreamRecoveryStore.clearIfSessionMatches(
                     this,
@@ -810,7 +929,11 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                     this,
                     pendingRecovery != null ?
                             pendingRecovery.getSessionId() :
-                            recoverySessionId,
+                    recoverySessionId,
+                    "appview_different_computer_intent");
+            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                    this,
+                    uuidString,
                     "appview_different_computer_intent");
             activeUpdateGeneration++;
             updateGenerationPrepared = false;
@@ -967,6 +1090,10 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
             return;
         }
 
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                uuidString,
+                "back_pressed");
         logRecoveryEvent("back_pressed_normal", recoverySessionId);
         super.onBackPressed();
     }
@@ -1188,6 +1315,11 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
             List<NvApp> parsedAppList,
             ComputerManagerService.AppListSnapshot appListSnapshot) {
         if (details.state == ComputerDetails.State.OFFLINE) {
+            if (!hasActiveRecoverySession() &&
+                    promoteGracefulCandidateFromOfflineCallback()) {
+                return;
+            }
+
             if (!hasActiveRecoverySession() &&
                     reactivatePendingRecoveryFromHostCallback(
                             "offline_callback_pending_reactivated")) {
@@ -1543,6 +1675,14 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     private void startAppManually(NvApp app, boolean withVirtualDisplay) {
         // Reaching this method means the user completed any required confirmation and
         // is starting a new attempt. Automatic launches never pass through this method.
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                uuidString,
+                "explicit_launch");
+        StreamRecoveryStore.clearOrdinaryAutoDesktopLaunchSuppression(
+                this,
+                uuidString,
+                "explicit_launch");
         fatalAutoDesktopLaunchBlocked = false;
         if (recoveryState == RecoveryState.BLOCKED_FATAL) {
             recoveryState = RecoveryState.IDLE;
@@ -1558,7 +1698,9 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 !receivedServerInfo || requireFreshServerInfo ||
                 autoDesktopLaunchPending || hasActiveRecoverySession() ||
                 autoDesktopConfirmationCancelled || fatalAutoDesktopLaunchBlocked ||
-                Game.terminatedByUser) {
+                Game.terminatedByUser ||
+                StreamRecoveryStore.isOrdinaryAutoDesktopLaunchSuppressed(
+                        this, uuidString)) {
             return;
         }
 
@@ -1621,7 +1763,9 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
                 computer.state != ComputerDetails.State.ONLINE ||
                 computer.pairState != PairingManager.PairState.PAIRED ||
                 !receivedServerInfo || requireFreshServerInfo ||
-                computer.activeAddress == null) {
+                computer.activeAddress == null ||
+                StreamRecoveryStore.isOrdinaryAutoDesktopLaunchSuppressed(
+                        this, uuidString)) {
             autoDesktopLaunchPending = false;
             autoDesktopLaunchDispatched = false;
             return;

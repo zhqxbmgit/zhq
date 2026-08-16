@@ -412,11 +412,16 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return;
         }
 
+        String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                computerUuid,
+                "b02_fatal");
+
         // A fatal result from a recovery attempt must consume that exact session so
         // AppView cannot dispatch it again after the error dialog is dismissed.
         StreamRecoveryStore.clearIfSessionMatches(this, recoverySessionId);
 
-        String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
         if (computerUuid == null || !fatalTerminationPublished.compareAndSet(false, true)) {
             return;
         }
@@ -431,6 +436,10 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         userInitiatedTermination = true;
         terminatedByUser = true;
         StreamRecoveryStore.cancel(this, recoverySessionId);
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                getIntent().getStringExtra(EXTRA_PC_UUID),
+                "user_action");
     }
 
     private TerminationClassification classifyTermination(
@@ -443,19 +452,21 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             return TerminationClassification.USER_CANCELLED;
         }
 
+        // B02 remains authoritative for every termination reason, including a
+        // graceful code received during the one permitted recovery attempt.
+        if (launchedAsRecovery) {
+            if (!recoveryStableGuardEstablishedAtTermination ||
+                    recoveryWithinUnstableWindowAtTermination) {
+                return TerminationClassification.FATAL;
+            }
+        }
+
         if (errorCode == MoonBridge.ML_ERROR_GRACEFUL_TERMINATION) {
             return TerminationClassification.GRACEFUL;
         }
 
         if (!connectionStartedAtTermination) {
             return TerminationClassification.FATAL;
-        }
-
-        if (launchedAsRecovery) {
-            if (!recoveryStableGuardEstablishedAtTermination ||
-                    recoveryWithinUnstableWindowAtTermination) {
-                return TerminationClassification.FATAL;
-            }
         }
 
         if (errorCode == -1) {
@@ -489,6 +500,17 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         startActivity(intent);
         finish();
         return true;
+    }
+
+    private boolean createGracefulHostLossCandidate() {
+        String computerUuid = getIntent().getStringExtra(EXTRA_PC_UUID);
+        return StreamRecoveryStore.createGracefulHostLossCandidate(
+                this,
+                computerUuid,
+                appUUID,
+                appId,
+                appName,
+                vDisplay) != null;
     }
 
     @SuppressLint({"MissingInflatedId", "ClickableViewAccessibility"})
@@ -730,6 +752,19 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 EXTRA_RECOVERY_SESSION_ID, StreamRecoveryStore.NO_SESSION_ID);
         launchedAsRecovery = recoverySessionId != StreamRecoveryStore.NO_SESSION_ID;
         recoveryStableGuardEstablished = !launchedAsRecovery;
+        if (!launchedAsRecovery) {
+            // Any newly started ordinary stream supersedes an older, unpromoted
+            // graceful candidate and retires this host's expiry suppression,
+            // regardless of which explicit entry point launched it.
+            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                    this,
+                    null,
+                    "new_game_started");
+            StreamRecoveryStore.clearOrdinaryAutoDesktopLaunchSuppression(
+                    this,
+                    getIntent().getStringExtra(EXTRA_PC_UUID),
+                    "new_game_started");
+        }
         serverCommands = Game.this.getIntent().getStringArrayListExtra(EXTRA_SERVER_COMMANDS);
         boolean appSupportsHdr = Game.this.getIntent().getBooleanExtra(EXTRA_APP_HDR, false);
         byte[] derCertData = Game.this.getIntent().getByteArrayExtra(EXTRA_SERVER_CERT);
@@ -3740,11 +3775,29 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         final boolean recoveryStableGuardEstablishedAtTermination =
                 recoveryStableGuardEstablished;
         final boolean recoveryWithinUnstableWindowAtTermination =
-                errorCode == -1 &&
                 launchedAsRecovery &&
                 recoveryStableGuardEstablishedAtTermination &&
                 StreamRecoveryStore.isWithinUnstableRecoveryWindow(
                         this, recoverySessionId);
+        final boolean recoveryStableGuardExpiredAtTermination =
+                launchedAsRecovery &&
+                recoveryStableGuardEstablishedAtTermination &&
+                !recoveryWithinUnstableWindowAtTermination;
+        final boolean recoveryAdmissionActiveAtTermination =
+                launchedAsRecovery &&
+                (!recoveryStableGuardEstablishedAtTermination ||
+                        recoveryWithinUnstableWindowAtTermination);
+
+        LimeLog.info("Stream recovery termination admission:" +
+                " launchedAsRecovery=" + launchedAsRecovery +
+                " activeRecovery=" + recoveryAdmissionActiveAtTermination +
+                " stableGuardEstablished=" +
+                recoveryStableGuardEstablishedAtTermination +
+                " stableGuardActive=" +
+                recoveryWithinUnstableWindowAtTermination +
+                " stableGuardExpired=" +
+                recoveryStableGuardExpiredAtTermination +
+                " errorCode=" + errorCode);
 
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
@@ -3790,6 +3843,20 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
                 }
 
                 if (classification == TerminationClassification.GRACEFUL) {
+                    if (connectionStartedAtTermination &&
+                            recoveryStableGuardExpiredAtTermination) {
+                        LimeLog.info("Stream recovery post_stable_new_interruption:" +
+                                " computerUuid=" +
+                                getIntent().getStringExtra(EXTRA_PC_UUID) +
+                                " reason=graceful_termination");
+                    }
+                    if (connectionStartedAtTermination &&
+                            !createGracefulHostLossCandidate()) {
+                        // Failure to persist this weaker evidence must preserve the
+                        // ordinary graceful exit. It must never be upgraded to B02
+                        // or an unscoped retry.
+                        LimeLog.warning("Failed to persist graceful host-loss candidate");
+                    }
                     StreamRecoveryStore.clearIfSessionMatches(
                             Game.this, recoverySessionId);
                     stopConnection();

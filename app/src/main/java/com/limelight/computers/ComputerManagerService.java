@@ -99,9 +99,22 @@ public class ComputerManagerService extends Service {
 
         activePolls.incrementAndGet();
 
+        boolean freshServerInfoAvailable;
+
         // Poll the machine
         try {
-            if (!pollComputer(details)) {
+            freshServerInfoAvailable = pollComputer(details);
+            if (!freshServerInfoAvailable) {
+                ComputerManagerListener currentListener = listener;
+                if (!newPc && currentListener != null) {
+                    // This is distinct from publishing ComputerDetails.OFFLINE. It
+                    // reports that every fresh serverinfo request for this poll failed,
+                    // even while the normal offline retry threshold is still active.
+                    currentListener.notifyComputerServerInfoUnavailable(
+                            details.uuid,
+                            System.currentTimeMillis());
+                }
+
                 if (!newPc && offlineCount < pollTriesBeforeOffline) {
                     // Return without calling the listener
                     releaseLocalDatabaseReference();
@@ -154,9 +167,19 @@ public class ComputerManagerService extends Service {
             }
         }
 
+        ComputerManagerListener currentListener = listener;
+        if (!newPc && freshServerInfoAvailable && currentListener != null) {
+            // Unlike the cached state emitted by startPolling(), this callback is
+            // proof that a fresh serverinfo request just completed successfully.
+            currentListener.notifyComputerServerInfoAvailable(
+                    details.uuid,
+                    System.currentTimeMillis());
+        }
+
         // Don't call the listener if this is a failed lookup of a new PC
-        if ((!newPc || details.state == ComputerDetails.State.ONLINE) && listener != null) {
-            listener.notifyComputerUpdated(details);
+        if ((!newPc || details.state == ComputerDetails.State.ONLINE) &&
+                currentListener != null) {
+            currentListener.notifyComputerUpdated(details);
         }
 
         releaseLocalDatabaseReference();

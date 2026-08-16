@@ -32,6 +32,8 @@ Main lifecycle responsibilities:
 | `PcView` | PC discovery, selection, pairing state, entry into app list |
 | `AppView` | App list, current running app, Desktop start/resume coordination |
 | `Game` | Active streaming Activity, input routing, orientation, session lifecycle |
+| `StreamRecoveryStore` | Durable, same-host recovery admission, candidate evidence, and launch guard |
+| `ComputerManagerService` | Normal host polling plus fresh-serverinfo availability evidence |
 | `NvConnection` | Streaming and remote input transport |
 
 ---
@@ -127,6 +129,79 @@ false = lifecycle interruption may be resumed
 ```
 
 Do not set it merely because a quit dialog was opened.
+
+### 4.1 Established-Stream Host Interruption Recovery
+
+Recovery applies to an established stream interrupted by the host or streaming service. It
+is deliberately broader than reboot recovery and includes shutdown, reboot,
+power-loss-like disconnect, Sunshine exit, and Sunshine restart.
+
+Admission begins in `Game` only after `connectionStarted()` and only for a non-user
+termination. Explicit disconnect, Back, and confirmed quit cancel recovery state.
+
+Two admission paths exist:
+
+```text
+established stream + error -1
+→ create pending recovery directly
+
+established stream + graceful error 0
+→ create same-host provisional candidate
+→ require confirmed OFFLINE
+   or fresh serverinfo failure followed by later fresh success
+→ atomically promote candidate to pending recovery
+```
+
+The graceful candidate has an approximately 60-second TTL. `UNKNOWN` does not count as
+service loss. The fresh failure/success callbacks are recovery evidence only; they do not
+reduce `ComputerManagerService`'s normal three-poll OFFLINE threshold or publish an early
+global OFFLINE state. Sunshine fast Restart may never reach final OFFLINE, so the ordered
+fresh-serverinfo failure and recovery sequence is required as an independent proof path.
+
+Candidate host UUID, target identity, virtual-display choice, creation time, and optional
+service-loss observation are persisted together. All store transitions are serialized.
+Promotion creates the recovery session and removes all candidate keys in one synchronous
+commit, preventing duplicate callback promotion and cross-candidate evidence leakage.
+
+Once pending, `AppView` requires fresh server information and a newly successful app-list
+snapshot. It re-resolves the target by UUID/ID/name, resumes the same target if already
+running, starts it when nothing is running, and refuses to replace a different running
+application. Persisted attempt admission makes the recovery launch single-flight before
+`ServerHelper.doStart(...)` is called.
+
+The recovery Game enters a 30-second `CONNECTED_GUARD` at its first
+`connectionStarted()` callback:
+
+```text
+recovery Game + guard active + termination 0/-1/other
+→ B02 fatal
+→ clear matching recovery/candidate state
+→ no second candidate, promotion, or recovery launch
+```
+
+After 30 seconds of stable connection, the stored recovery record is retired. A later
+established-stream interruption is a new independent recovery session even though the
+Activity was originally launched as recovery.
+
+Safety invariant: graceful `0` plus continuously available Sunshine must not be promoted
+and must not automatically reconnect. A live candidate blocks ordinary auto-Desktop. If an
+unconsumed candidate reaches its natural TTL, the Store atomically removes the candidate
+keys and writes a persistent same-host ordinary-auto suppression tombstone in one
+synchronous commit under the same lock. This applies even if service loss was observed but
+promotion never completed.
+
+Ordinary-auto admission is therefore:
+
+```text
+matching live candidate OR matching expiry tombstone
+→ suppress AppView auto-resume/auto-start and PcView auto-entry for that host
+```
+
+AppView checks this admission both before deciding and immediately before dispatching Game.
+Explicit App launch clears the matching tombstone. A new ordinary Game, new graceful
+candidate, direct `-1` recovery, or successful OFFLINE/transient promotion also clears or
+replaces it. Tombstone keys are derived from normalized host UUIDs, so another host remains
+independent and the suppression cannot become a permanent global auto-Desktop disable.
 
 ---
 

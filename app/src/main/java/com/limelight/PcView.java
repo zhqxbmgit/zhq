@@ -331,6 +331,66 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
                         }
                     }
                 }
+
+                @Override
+                public void notifyComputerServerInfoUnavailable(
+                        final String computerUuid,
+                        final long observedAt) {
+                    if (freezeUpdates || computerUuid == null) {
+                        return;
+                    }
+
+                    StreamRecoveryStore
+                            .markGracefulHostLossCandidateServiceUnavailable(
+                                    PcView.this,
+                                    computerUuid,
+                                    observedAt);
+                }
+
+                @Override
+                public void notifyComputerServerInfoAvailable(
+                        final String computerUuid,
+                        final long observedAt) {
+                    if (computerUuid == null) {
+                        return;
+                    }
+
+                    StreamRecoveryStore.GracefulHostLossCandidate candidate =
+                            StreamRecoveryStore.getGracefulHostLossCandidate(
+                                    PcView.this,
+                                    computerUuid);
+                    if (candidate == null ||
+                            candidate.getServiceLossObservedAt() <= 0 ||
+                            observedAt < candidate.getServiceLossObservedAt() ||
+                            observedAt < candidate.getCreatedAt()) {
+                        return;
+                    }
+
+                    PcView.this.runOnUiThread(() -> {
+                        if (freezeUpdates || !inForeground || !runningPolling) {
+                            return;
+                        }
+
+                        if (Game.terminatedByUser) {
+                            StreamRecoveryStore.clearGracefulHostLossCandidate(
+                                    PcView.this,
+                                    computerUuid,
+                                    "recovery_blocked");
+                            return;
+                        }
+
+                        StreamRecoveryStore.RecoveryRecord promotedRecovery =
+                                StreamRecoveryStore
+                                        .promoteGracefulHostLossCandidateAfterServiceRecovery(
+                                                PcView.this,
+                                                computerUuid,
+                                                observedAt);
+                        if (promotedRecovery != null) {
+                            handlePendingRecoveryRedirect(
+                                    "service_recovered_after_transient_loss");
+                        }
+                    });
+                }
             });
             runningPolling = true;
         }
@@ -412,6 +472,15 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
             recoveryRedirectObservedPause = true;
         }
         stopComputerUpdates(false);
+    }
+
+    @Override
+    public void onBackPressed() {
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                null,
+                "pcview_back_pressed");
+        super.onBackPressed();
     }
 
     @Override
@@ -847,6 +916,12 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
         StreamRecoveryStore.RecoveryRecord pendingRecovery =
                 StreamRecoveryStore.loadPendingRecovery(this);
         if (pendingRecovery == null) {
+            if (selectedComputer != null) {
+                StreamRecoveryStore.clearGracefulHostLossCandidate(
+                        this,
+                        selectedComputer.uuid,
+                        "pcview_explicit_computer");
+            }
             resetRecoveryRedirectGate("no_pending_token");
             return false;
         }
@@ -1055,6 +1130,14 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     }
 
     private void removeComputer(ComputerDetails details) {
+        StreamRecoveryStore.clearGracefulHostLossCandidate(
+                this,
+                details.uuid,
+                "pcview_computer_removed");
+        StreamRecoveryStore.clearOrdinaryAutoDesktopLaunchSuppression(
+                this,
+                details.uuid,
+                "pcview_computer_removed");
         managerBinder.removeComputer(details);
 
         new DiskAssetLoader(this).deleteAssetsForComputer(details.uuid);
@@ -1087,6 +1170,14 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     }
 
     private void updateComputer(ComputerDetails details) {
+        if (details.state == ComputerDetails.State.OFFLINE) {
+            // Only an authoritative OFFLINE callback for the exact candidate host
+            // may turn graceful termination evidence into a pending recovery.
+            StreamRecoveryStore.promoteGracefulHostLossCandidate(
+                    this,
+                    details.uuid);
+        }
+
         ComputerObject existingEntry = null;
 
         for (int i = 0; i < pcGridAdapter.getCount(); i++) {
@@ -1124,6 +1215,10 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
             return;
         }
 
+        if (StreamRecoveryStore.getGracefulHostLossCandidate(this) != null) {
+            return;
+        }
+
         PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
         if (!prefConfig.autoStartDesktopStreamOnLaunch) {
             return;
@@ -1133,7 +1228,9 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
             ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(i);
             if (computer != null && computer.details != null &&
                 computer.details.pairState == PairingManager.PairState.PAIRED &&
-                computer.details.state == ComputerDetails.State.ONLINE) {
+                computer.details.state == ComputerDetails.State.ONLINE &&
+                !StreamRecoveryStore.isOrdinaryAutoDesktopLaunchSuppressed(
+                        this, computer.details.uuid)) {
                 
                 autoConnectAttemptedThisLaunch = true;
                 autoConnectTriggeredThisLaunch = true;

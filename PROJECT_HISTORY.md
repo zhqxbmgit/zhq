@@ -620,7 +620,116 @@ Potential optimization:
 
 ---
 
-## 12. Update Template
+## 12. 2026-08-16 — Established-Stream Host Interruption Recovery
+
+### Scope
+
+This feature is established-stream host interruption recovery, not only reboot recovery.
+It covers:
+
+- Windows shutdown, reboot, and power-loss-like disconnects
+- Sunshine exit, restart, and transient service interruption
+- A direct post-connection `-1` interruption path
+- A provisional graceful-termination (`0`) path that requires later host-loss evidence
+
+User disconnect, Back, and confirmed quit remain cancellation paths and must not create
+or resume a recovery session.
+
+### Runtime Design
+
+`Game` admits recovery only after the stream reached `connectionStarted()` and the
+termination was not user initiated.
+
+The direct `-1` path creates a pending, same-host recovery record immediately. A graceful
+`0` does not immediately recover. It creates a provisional candidate with an approximately
+60-second TTL, bound to the interrupted host and target application. That candidate can be
+promoted only by one of these same-host evidence paths:
+
+```text
+confirmed ComputerDetails.State.OFFLINE
+```
+
+or:
+
+```text
+fresh serverinfo unavailable
+→ later fresh serverinfo available
+```
+
+`UNKNOWN` state is not itself service-loss evidence. Candidate creation, service-loss
+evidence, and promotion are stored under one process-wide lock; promotion writes the new
+recovery record and removes all candidate keys in one synchronous `SharedPreferences`
+commit. Evidence from another host or an earlier candidate is not accepted.
+
+Sunshine fast Restart does not necessarily reach final
+`ComputerDetails.State.OFFLINE`. The fresh-serverinfo failure/success sequence therefore
+provides the second, narrower proof of a transient Sunshine service interruption without
+lowering the normal Computer Manager OFFLINE threshold.
+
+After promotion, recovery waits for fresh server information and a fresh application list,
+re-resolves the interrupted Desktop/application target, refuses to replace another running
+application, and uses a persisted attempt count for single-flight launch admission.
+
+### Connected Guard and B02
+
+The one permitted recovery launch enters `CONNECTED_GUARD` when `connectionStarted()` is
+received. For the first 30 seconds, every non-user termination code (`0`, `-1`, or other)
+is classified as fatal. B02 therefore prevents an unstable recovery Game from creating a
+second candidate, a second promotion, or another automatic recovery launch.
+
+After the recovery stream remains connected for more than 30 seconds, the old recovery
+record is retired. A later established-stream interruption can create a new, independent
+recovery session; `launchedAsRecovery` is not used as a permanent lifetime lockout.
+
+### Files Involved
+
+- `app/src/main/java/com/limelight/Game.java`
+- `app/src/main/java/com/limelight/AppView.java`
+- `app/src/main/java/com/limelight/PcView.java`
+- `app/src/main/java/com/limelight/StreamRecoveryStore.java`
+- `app/src/main/java/com/limelight/computers/ComputerManagerListener.java`
+- `app/src/main/java/com/limelight/computers/ComputerManagerService.java`
+- `app/src/main/java/com/limelight/utils/ServerHelper.java` (recovery-session launch handoff)
+
+### Real-Device Results
+
+- Windows shutdown, startup, and automatic recovery: Passed
+- A second shutdown/startup after the first recovery was stable for more than 30 seconds:
+  Passed as a new recovery session
+- Sunshine exit and later startup: Passed
+- Sunshine fast Restart with fresh-serverinfo transient failure followed by success: Passed
+- B02 restart within 30 seconds of recovery connection: Passed; fatal classification, no
+  second candidate, no second promotion, and no automatic recovery launch
+
+### Candidate-Expiry Ordinary-Auto Suppression Fix
+
+A graceful `0` while Sunshine remains continuously reachable must not be promoted and must
+not cause automatic reconnection. A final static audit found that deleting an expired
+candidate could previously let an existing AppView ordinary auto-Desktop request become
+eligible again in the same coordinator call.
+
+The fix converts every unconsumed candidate that reaches its natural approximately
+60-second expiry into a persistent, same-host ordinary-auto suppression tombstone. Candidate
+key removal and tombstone creation use one `SharedPreferences.Editor`, one synchronous
+`commit()`, and the same store lock, so callers cannot observe candidate-absent and
+suppression-absent state between those operations. This applies whether or not transient
+service loss was observed; an observation alone does not mean recovery successfully took
+ownership.
+
+Both AppView ordinary-auto admission gates use the combined live-candidate/tombstone query.
+PcView skips only the matching suppressed host during ordinary automatic entry. Explicit
+App launch remains available and clears the same-host tombstone before dispatch. A new
+ordinary Game, new graceful candidate, direct `-1` recovery, or successful OFFLINE/transient
+promotion also clears or replaces the matching tombstone. Different hosts use independent
+keys.
+
+Deterministic Robolectric Store tests cover no-loss expiry, loss-observed-but-unpromoted
+expiry, atomic post-expiry state, same-host admission, different-host isolation, explicit
+clear, new candidate replacement, direct recovery, and both promotion paths.
+
+---
+
+## 13. Update Template
 
 Append major updates using:
 
