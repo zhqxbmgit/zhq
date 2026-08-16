@@ -43,6 +43,7 @@ public class PreferenceConfiguration {
     public static final String SLIDE_BUTTON_LR_TAP_HOLD_MS_PREF_STRING = "slideButtonLrTapHoldMs";
     public static final String SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING = "slideButtonLrLongPressMs";
     public static final String TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING = "trackpadLinearSpeedMultiplier";
+    public static final String TRACKPAD_FINAL_OUTPUT_GAIN_PREF_STRING = "trackpadFinalOutputGain";
     public static final String TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING = "trackpadTapDurationMaxMs";
     public static final String TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING = "trackpadDoubleTapIntervalMs";
     public static final String TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX_PREF_STRING = "trackpadTapMovementThresholdPx";
@@ -244,6 +245,7 @@ public class PreferenceConfiguration {
     public static final int DEFAULT_SLIDE_BUTTON_LR_TAP_HOLD_MS = 25;
     public static final int DEFAULT_SLIDE_BUTTON_LR_LONG_PRESS_MS = 400;
     public static final float DEFAULT_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 7.0f;
+    public static final double DEFAULT_TRACKPAD_FINAL_OUTPUT_GAIN = 1.0;
     public static final int DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS = 300;
     public static final int DEFAULT_TRACKPAD_DOUBLE_TAP_INTERVAL_MS = 130;
     public static final float DEFAULT_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX = 8.0f;
@@ -261,6 +263,8 @@ public class PreferenceConfiguration {
     private static final int MAX_SLIDE_BUTTON_LONG_PRESS_MS = 2000;
     private static final float MIN_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 0.1f;
     private static final float MAX_TRACKPAD_LINEAR_SPEED_MULTIPLIER = 30.0f;
+    private static final double MIN_TRACKPAD_FINAL_OUTPUT_GAIN = 1.0;
+    private static final double MAX_TRACKPAD_FINAL_OUTPUT_GAIN = 3.0;
     private static final int MIN_TRACKPAD_TAP_DURATION_MAX_MS = 50;
     private static final int MAX_TRACKPAD_TAP_DURATION_MAX_MS = 1500;
     private static final int MIN_TRACKPAD_DOUBLE_TAP_INTERVAL_MS = 50;
@@ -415,6 +419,7 @@ public class PreferenceConfiguration {
     public int slideButtonLrTapHoldMs;
     public int slideButtonLrLongPressMs;
     public float trackpadLinearSpeedMultiplier;
+    public double trackpadFinalOutputGain;
     public int trackpadTapDurationMaxMs;
     public int trackpadDoubleTapIntervalMs;
     public float trackpadTapMovementThresholdPx;
@@ -900,6 +905,11 @@ private static int getFramePacingValue(Context context) {
                 MIN_TRACKPAD_LINEAR_SPEED_MULTIPLIER, MAX_TRACKPAD_LINEAR_SPEED_MULTIPLIER);
     }
 
+    public static double parseTrackpadFinalOutputGain(String value) {
+        return parseClampedDouble(value, DEFAULT_TRACKPAD_FINAL_OUTPUT_GAIN,
+                MIN_TRACKPAD_FINAL_OUTPUT_GAIN, MAX_TRACKPAD_FINAL_OUTPUT_GAIN);
+    }
+
     public static int parseTrackpadTapDurationMaxMs(String value) {
         return parseClampedInt(value, DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS,
                 MIN_TRACKPAD_TAP_DURATION_MAX_MS, MAX_TRACKPAD_TAP_DURATION_MAX_MS);
@@ -1239,6 +1249,8 @@ private static int getFramePacingValue(Context context) {
                 getStringPreference(prefs, SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING));
         config.trackpadLinearSpeedMultiplier = parseTrackpadLinearSpeedMultiplier(
                 getStringPreference(prefs, TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING));
+        config.trackpadFinalOutputGain = parseTrackpadFinalOutputGain(
+                getStringPreference(prefs, TRACKPAD_FINAL_OUTPUT_GAIN_PREF_STRING));
         config.trackpadTapDurationMaxMs = parseTrackpadTapDurationMaxMs(
                 getStringPreference(prefs, TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING));
         config.trackpadDoubleTapIntervalMs = parseTrackpadDoubleTapIntervalMs(

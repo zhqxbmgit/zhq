@@ -987,6 +987,13 @@
                 app:iconSpaceReserved="false" />
 
             <EditTextPreference
+                android:dialogMessage="@string/dialog_trackpad_final_output_gain"
+                android:key="trackpadFinalOutputGain"
+                android:singleLine="true"
+                android:title="@string/title_trackpad_final_output_gain"
+                app:iconSpaceReserved="false" />
+
+            <EditTextPreference
                 android:dialogMessage="@string/dialog_trackpad_tap_duration_max_range"
                 android:key="trackpadTapDurationMaxMs"
                 android:singleLine="true"

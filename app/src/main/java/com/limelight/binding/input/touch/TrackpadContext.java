@@ -43,6 +43,7 @@ public class TrackpadContext implements TouchContext {
     private static final double VEL_THRESHOLD = 2.0;
 
     private float gestureLinearSpeedMultiplier;
+    private double gestureFinalMouseOutputGain;
     private int gestureTapDurationMaxMs;
     private int gestureDoubleTapIntervalMs;
     private float gestureTapMovementThresholdPx;
@@ -65,6 +66,7 @@ public class TrackpadContext implements TouchContext {
     private double currentVelX = 0, currentVelY = 0;
     private double lastSentX = 0, lastSentY = 0;
     private double carryOverX = 0, carryOverY = 0;
+    private final FinalMouseOutputScaler finalMouseOutputScaler = new FinalMouseOutputScaler();
 
     // 原构造函数(无振动):保持兼容,vibrator为null
     public TrackpadContext(NvConnection conn, int actionIndex, boolean swapAxis, int sensitivityX, int sensitivityY) {
@@ -97,6 +99,7 @@ public class TrackpadContext implements TouchContext {
     private void applyGestureParameters(PreferenceConfiguration preferences) {
         if (preferences == null) {
             gestureLinearSpeedMultiplier = PreferenceConfiguration.DEFAULT_TRACKPAD_LINEAR_SPEED_MULTIPLIER;
+            gestureFinalMouseOutputGain = PreferenceConfiguration.DEFAULT_TRACKPAD_FINAL_OUTPUT_GAIN;
             gestureTapDurationMaxMs = PreferenceConfiguration.DEFAULT_TRACKPAD_TAP_DURATION_MAX_MS;
             gestureDoubleTapIntervalMs = PreferenceConfiguration.DEFAULT_TRACKPAD_DOUBLE_TAP_INTERVAL_MS;
             gestureTapMovementThresholdPx = PreferenceConfiguration.DEFAULT_TRACKPAD_TAP_MOVEMENT_THRESHOLD_PX;
@@ -107,6 +110,7 @@ public class TrackpadContext implements TouchContext {
             gestureGlideDeceleration = PreferenceConfiguration.DEFAULT_TRACKPAD_GLIDE_DECELERATION;
         } else {
             gestureLinearSpeedMultiplier = preferences.trackpadLinearSpeedMultiplier;
+            gestureFinalMouseOutputGain = preferences.trackpadFinalOutputGain;
             gestureTapDurationMaxMs = preferences.trackpadTapDurationMaxMs;
             gestureDoubleTapIntervalMs = preferences.trackpadDoubleTapIntervalMs;
             gestureTapMovementThresholdPx = preferences.trackpadTapMovementThresholdPx;
@@ -119,6 +123,7 @@ public class TrackpadContext implements TouchContext {
 
         gestureMultiplierX = baseSensitivityX * gestureLinearSpeedMultiplier;
         gestureMultiplierY = baseSensitivityY * gestureLinearSpeedMultiplier;
+        finalMouseOutputScaler.setGain(gestureFinalMouseOutputGain);
     }
 
     private PreferenceConfiguration readGestureParameters() {
@@ -227,6 +232,7 @@ public class TrackpadContext implements TouchContext {
         synchronized (stateLock) {
             targetAccumX = 0; targetAccumY = 0; currentPosX = 0; currentPosY = 0;
             currentVelX = 0; currentVelY = 0; lastSentX = 0; lastSentY = 0; carryOverX = 0; carryOverY = 0;
+            finalMouseOutputScaler.reset();
         }
         if (isDragging) { conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_LEFT); isDragging = false; }
         confirmedMove = false;
@@ -241,6 +247,7 @@ public class TrackpadContext implements TouchContext {
     }
 
     private void tick() {
+        short logicalSendDeltaX = 0, logicalSendDeltaY = 0;
         short sendDeltaX = 0, sendDeltaY = 0;
         boolean shouldStop = false;
 
@@ -309,8 +316,13 @@ public class TrackpadContext implements TouchContext {
             }
 
             double moveX = currentPosX - lastSentX, moveY = currentPosY - lastSentY;
-            sendDeltaX = (short) Math.round(moveX); sendDeltaY = (short) Math.round(moveY);
-            if (sendDeltaX != 0 || sendDeltaY != 0) { lastSentX += sendDeltaX; lastSentY += sendDeltaY; }
+            logicalSendDeltaX = (short) Math.round(moveX); logicalSendDeltaY = (short) Math.round(moveY);
+            if (logicalSendDeltaX != 0 || logicalSendDeltaY != 0) {
+                lastSentX += logicalSendDeltaX; lastSentY += logicalSendDeltaY;
+            }
+
+            sendDeltaX = finalMouseOutputScaler.scaleX(logicalSendDeltaX);
+            sendDeltaY = finalMouseOutputScaler.scaleY(logicalSendDeltaY);
 
             if (shouldStop) {
                 carryOverX = currentPosX - lastSentX;

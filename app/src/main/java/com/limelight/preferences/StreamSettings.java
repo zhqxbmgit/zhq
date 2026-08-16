@@ -64,6 +64,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Map;
 
 public class StreamSettings extends AppCompatActivity {
@@ -265,6 +266,8 @@ public class StreamSettings extends AppCompatActivity {
             switch (key) {
                 case PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING:
                     return Float.toString(PreferenceConfiguration.parseTrackpadLinearSpeedMultiplier(value));
+                case PreferenceConfiguration.TRACKPAD_FINAL_OUTPUT_GAIN_PREF_STRING:
+                    return Double.toString(PreferenceConfiguration.parseTrackpadFinalOutputGain(value));
                 case PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING:
                     return Integer.toString(PreferenceConfiguration.parseTrackpadTapDurationMaxMs(value));
                 case PreferenceConfiguration.TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING:
@@ -296,6 +299,9 @@ public class StreamSettings extends AppCompatActivity {
                 case PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING:
                     return getString(R.string.summary_trackpad_value_multiplier,
                             Float.toString(config.trackpadLinearSpeedMultiplier));
+                case PreferenceConfiguration.TRACKPAD_FINAL_OUTPUT_GAIN_PREF_STRING:
+                    return getString(R.string.summary_trackpad_value_multiplier,
+                            String.format(Locale.ROOT, "%.2f", config.trackpadFinalOutputGain));
                 case PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING:
                     return getString(R.string.summary_trackpad_value_ms, config.trackpadTapDurationMaxMs);
                 case PreferenceConfiguration.TRACKPAD_DOUBLE_TAP_INTERVAL_MS_PREF_STRING:
@@ -532,6 +538,8 @@ public class StreamSettings extends AppCompatActivity {
                     PreferenceConfiguration.SLIDE_BUTTON_LR_LONG_PRESS_MS_PREF_STRING, false);
             configureTrackpadNumericPreference(
                     PreferenceConfiguration.TRACKPAD_LINEAR_SPEED_MULTIPLIER_PREF_STRING, true);
+            configureTrackpadNumericPreference(
+                    PreferenceConfiguration.TRACKPAD_FINAL_OUTPUT_GAIN_PREF_STRING, true);
             configureTrackpadNumericPreference(
                     PreferenceConfiguration.TRACKPAD_TAP_DURATION_MAX_MS_PREF_STRING, false);
             configureTrackpadNumericPreference(

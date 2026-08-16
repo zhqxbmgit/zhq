@@ -566,6 +566,7 @@
     <string name="summary_trackpad_swap_axis">On some devices, trackpad input may be rotated in axis. Enabling this option may help.</string>
     <string name="title_trackpad_context_parameters">TrackpadContext settings</string>
     <string name="title_trackpad_linear_speed_multiplier">Movement speed multiplier</string>
+    <string name="title_trackpad_final_output_gain">Final Mouse Output Gain</string>
     <string name="title_trackpad_tap_duration_max">Maximum tap duration</string>
     <string name="title_trackpad_double_tap_interval">Double-tap interval</string>
     <string name="title_trackpad_tap_movement_threshold">Tap movement tolerance</string>
@@ -575,6 +576,7 @@
     <string name="title_trackpad_max_acceleration">Maximum acceleration</string>
     <string name="title_trackpad_glide_deceleration">Glide deceleration</string>
     <string name="dialog_trackpad_linear_speed_multiplier_range">Allowed range: 0.1–30.0</string>
+    <string name="dialog_trackpad_final_output_gain">After smoothing, acceleration, velocity limiting, and inertia calculations are complete, multiply the final relative mouse movement. Allowed range: 1.00–3.00.</string>
     <string name="dialog_trackpad_tap_duration_max_range">Allowed range: 50–1500 ms</string>
     <string name="dialog_trackpad_double_tap_interval_range">Allowed range: 50–1000 ms</string>
     <string name="dialog_trackpad_tap_movement_threshold_range">Allowed range: 0.5–100.0 px</string>

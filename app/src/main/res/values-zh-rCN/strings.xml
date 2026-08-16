@@ -523,6 +523,7 @@
     <string name="summary_trackpad_swap_axis">在某些设备上，触摸板输入坐标可能会与当前视图方向不符。开启此选项可能会有用。</string>
     <string name="title_trackpad_context_parameters">TrackpadContext 参数</string>
     <string name="title_trackpad_linear_speed_multiplier">移动速度倍数</string>
+    <string name="title_trackpad_final_output_gain">最终鼠标输出倍率</string>
     <string name="title_trackpad_tap_duration_max">单击最大持续时间</string>
     <string name="title_trackpad_double_tap_interval">双击间隔</string>
     <string name="title_trackpad_tap_movement_threshold">单击移动容差</string>
@@ -532,6 +533,7 @@
     <string name="title_trackpad_max_acceleration">最大加速度</string>
     <string name="title_trackpad_glide_deceleration">惯性减速度</string>
     <string name="dialog_trackpad_linear_speed_multiplier_range">允许范围：0.1–30.0</string>
+    <string name="dialog_trackpad_final_output_gain">在平滑、加速度、速度限制和惯性计算完成后，对最终相对鼠标位移进行倍率放大。允许范围：1.00–3.00。</string>
     <string name="dialog_trackpad_tap_duration_max_range">允许范围：50–1500 ms</string>
     <string name="dialog_trackpad_double_tap_interval_range">允许范围：50–1000 ms</string>
     <string name="dialog_trackpad_tap_movement_threshold_range">允许范围：0.5–100.0 px</string>
