@@ -577,7 +577,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && onExternelDisplay
-                && prefConfig.renderMode == 0 // For 3D we want to maintain configured resolution
         ) {
             Display.Mode currentMode = currentDisplay.getMode();
             displayWidth = currentMode.getPhysicalWidth();
@@ -592,10 +591,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
             setPreferredOrientationForActivity();
         } else {
-            if (prefConfig.renderMode != 0) {
-                prefConfig.videoScaleMode = PreferenceConfiguration.ScaleMode.STRETCH;
-            }
-
             if (prefConfig.autoOrientation) {
                 currentOrientation = getResources().getConfiguration().orientation;
             } else {
@@ -1911,7 +1906,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         // Destroy the capture provider
         inputCaptureProvider.destroy();
-        streamContainer.onDestroy();
     }
 
     @Override
