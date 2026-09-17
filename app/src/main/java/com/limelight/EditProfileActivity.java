@@ -21,6 +21,7 @@ import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.preferences.StreamSettings;
 import com.limelight.profiles.ProfilesManager;
 import com.limelight.profiles.SettingsProfile;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.UiHelper;
 
 import java.util.HashMap;
@@ -38,6 +39,7 @@ public class EditProfileActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
         setContentView(R.layout.activity_edit_profile);
 
         UiHelper.setLocale(this);
@@ -83,6 +85,12 @@ public class EditProfileActivity extends AppCompatActivity {
             .commit();
 
         UiHelper.notifyNewRootView(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     @Override
@@ -294,6 +302,10 @@ public class EditProfileActivity extends AppCompatActivity {
                 _pref.setVisible(false);
             }
             _pref = findPreference("option_help_custom_keys");
+            if (_pref != null) {
+                _pref.setVisible(false);
+            }
+            _pref = findPreference(PreferenceConfiguration.APP_ORIENTATION_PREF_STRING);
             if (_pref != null) {
                 _pref.setVisible(false);
             }

@@ -753,4 +753,7 @@
 
     <string name="title_auto_start_desktop_stream_on_launch">启动时自动进入电脑桌面</string>
     <string name="summary_auto_start_desktop_stream_on_launch">打开 APP 时自动连接可用的已配对电脑并启动桌面串流</string>
+    <string name="title_app_orientation">界面方向</string>
+    <string name="app_orientation_portrait">竖屏</string>
+    <string name="app_orientation_landscape">横屏</string>
 </resources>

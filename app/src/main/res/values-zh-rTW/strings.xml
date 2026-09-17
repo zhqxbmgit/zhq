@@ -771,4 +771,7 @@
 
 	<string name="title_checkbox_full_screen">啟用全螢幕</string>
 	<string name="summary_checkbox_full_screen">以沉浸模式隱藏系統列</string>
+	<string name="title_app_orientation">介面方向</string>
+	<string name="app_orientation_portrait">直向</string>
+	<string name="app_orientation_landscape">橫向</string>
 </resources>

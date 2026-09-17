@@ -584,4 +584,7 @@
     <string name="title_checkbox_remember_zoom_pan">Mémoriser le zoom et le panoramique</string>
     <string name="summary_checkbox_remember_zoom_pan">Enregistre la position de zoom et de panoramique entre les sessions.</string>
     <string name="title_edit_profile">Modifier le profil</string>
+    <string name="title_app_orientation">Orientation de l’interface</string>
+    <string name="app_orientation_portrait">Portrait</string>
+    <string name="app_orientation_landscape">Paysage</string>
 </resources>

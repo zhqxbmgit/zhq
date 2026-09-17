@@ -11,6 +11,7 @@ import android.window.OnBackInvokedDispatcher;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.SpinnerDialog;
 
 public class HelpActivity extends AppCompatActivity {
@@ -24,6 +25,7 @@ public class HelpActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             onBackInvokedCallback = new OnBackInvokedCallback() {
@@ -76,6 +78,12 @@ public class HelpActivity extends AppCompatActivity {
         });
 
         webView.loadUrl(getIntent().getData().toString());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     private void refreshBackDispatchState() {

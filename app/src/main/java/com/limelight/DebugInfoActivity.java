@@ -23,6 +23,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.limelight.utils.DeviceUtils;
+import com.limelight.utils.OrientationHelper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,7 @@ public class DebugInfoActivity extends AppCompatActivity implements View.OnClick
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
         setContentView(R.layout.activity_axitest);
 
         tx_gamepad_info = findViewById(R.id.tx_game_pad_info);
@@ -63,6 +65,12 @@ public class DebugInfoActivity extends AppCompatActivity implements View.OnClick
         bt_vibrator.setText(getString(R.string.debug_info_test_device_vibration, content));
 
         showSimlateAmp();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     private void showSimlateAmp() {

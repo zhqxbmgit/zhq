@@ -6,6 +6,8 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.view.Display;
 
+import androidx.preference.PreferenceManager;
+
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.profiles.ProfilesManager;
 
@@ -30,6 +32,11 @@ public class PreferenceConfiguration {
         LEFT
     }
 
+    public enum AppOrientation {
+        PORTRAIT,
+        LANDSCAPE
+    }
+
     public static final String CUSTOM_BITRATE_PREF_STRING = "edit_diy_bitrate";
     public static final String CUSTOM_REFRESH_RATE_PREF_STRING = "custom_refresh_rate";
     public static final String CUSTOM_RESOLUTION_PREF_STRING = "edit_diy_w_h";
@@ -52,6 +59,9 @@ public class PreferenceConfiguration {
     public static final String TRACKPAD_MAX_VELOCITY_PREF_STRING = "trackpadMaxVelocity";
     public static final String TRACKPAD_MAX_ACCELERATION_PREF_STRING = "trackpadMaxAcceleration";
     public static final String TRACKPAD_GLIDE_DECELERATION_PREF_STRING = "trackpadGlideDeceleration";
+    public static final String APP_ORIENTATION_PREF_STRING = "list_app_orientation";
+    public static final String APP_ORIENTATION_PORTRAIT = "portrait";
+    public static final String APP_ORIENTATION_LANDSCAPE = "landscape";
 
     private static final String LEGACY_RES_FPS_PREF_STRING = "list_resolution_fps";
     private static final String LEGACY_ENABLE_51_SURROUND_PREF_STRING = "checkbox_51_surround";
@@ -165,6 +175,7 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_USE_VIRTUAL_DISPLAY = false;
     private static final String DEFAULT_VIDEO_SCALE_MODE = "fit";
     private static final boolean DEFAULT_AUTO_INVERT_VIDEO_RESOLUTION = true;
+    public static final AppOrientation DEFAULT_APP_ORIENTATION = AppOrientation.PORTRAIT;
     private static final int DEFAULT_RESOLUTION_SCALE_FACTOR = 100;
     private static final boolean DEFAULT_RESUME_WITHOUT_CONFIRM = false;
     private static final boolean DEFAULT_SOPS = true;
@@ -332,6 +343,7 @@ public class PreferenceConfiguration {
     public boolean enableHdr;
     public boolean enablePip;
     public boolean autoStartDesktopStreamOnLaunch;
+    public AppOrientation appOrientation;
 
     public boolean enablePerfOverlay;
     public boolean enablePerfLogging;
@@ -793,6 +805,25 @@ private static int getFramePacingValue(Context context) {
         return readPreferences(context, null);
     }
 
+    public static AppOrientation parseAppOrientation(String value) {
+        if (APP_ORIENTATION_LANDSCAPE.equals(value)) {
+            return AppOrientation.LANDSCAPE;
+        }
+
+        return DEFAULT_APP_ORIENTATION;
+    }
+
+    public static AppOrientation getAppOrientation(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        try {
+            return parseAppOrientation(prefs.getString(
+                    APP_ORIENTATION_PREF_STRING,
+                    APP_ORIENTATION_PORTRAIT));
+        } catch (ClassCastException e) {
+            return DEFAULT_APP_ORIENTATION;
+        }
+    }
+
     private static float parseClampedFloat(String value, float defaultValue, float minValue, float maxValue) {
         if (value == null || value.trim().isEmpty()) {
             return defaultValue;
@@ -946,6 +977,7 @@ private static int getFramePacingValue(Context context) {
             prefs = ProfilesManager.getInstance().getOverlayingSharedPreferences(context);
         }
         PreferenceConfiguration config = new PreferenceConfiguration();
+        config.appOrientation = getAppOrientation(context);
 
         // Migrate legacy preferences to the new locations
         if (prefs.contains(LEGACY_ENABLE_51_SURROUND_PREF_STRING)) {

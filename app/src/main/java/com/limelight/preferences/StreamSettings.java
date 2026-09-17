@@ -55,6 +55,7 @@ import com.limelight.binding.input.virtual_controller.keyboard.KeyBoardControlle
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.FileUriUtils;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.PerformanceDataTracker;
 import com.limelight.utils.UiHelper;
 import org.json.JSONObject;
@@ -94,6 +95,7 @@ public class StreamSettings extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
 //        setTheme(R.style.AppTheme);
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         previousPrefs = PreferenceConfiguration.readPreferences(this);
 
@@ -102,6 +104,12 @@ public class StreamSettings extends AppCompatActivity {
         setContentView(R.layout.activity_stream_settings);
 
 //        UiHelper.notifyNewRootView(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     @Override
@@ -517,6 +525,16 @@ public class StreamSettings extends AppCompatActivity {
         public void initializePreferences() {
             addPreferencesFromResource(R.xml.preferences);
             PreferenceScreen screen = getPreferenceScreen();
+
+            Preference orientationPreference = findPreference(
+                    PreferenceConfiguration.APP_ORIENTATION_PREF_STRING);
+            orientationPreference.setOnPreferenceChangeListener((preference, newValue) -> {
+                Activity activity = getActivity();
+                if (activity != null) {
+                    OrientationHelper.apply(activity, newValue);
+                }
+                return true;
+            });
 
             configureSlideButtonNumericPreference(
                     PreferenceConfiguration.SLIDE_BUTTON_UP_THRESHOLD_DP_PREF_STRING, true);

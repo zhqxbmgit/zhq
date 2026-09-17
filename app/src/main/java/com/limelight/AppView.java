@@ -19,6 +19,7 @@ import com.limelight.ui.AdapterFragment;
 import com.limelight.ui.AdapterFragmentCallbacks;
 import com.limelight.utils.CacheHelper;
 import com.limelight.utils.Dialog;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.SpinnerDialog;
@@ -408,6 +409,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         showHiddenApps = getIntent().getBooleanExtra(SHOW_HIDDEN_APPS_EXTRA, false);
         autoStartDesktopRequested = getIntent().getBooleanExtra(
@@ -970,6 +972,7 @@ public class AppView extends AppCompatActivity implements AdapterFragmentCallbac
     @Override
     protected void onResume() {
         super.onResume();
+        OrientationHelper.apply(this);
 
         boolean requireFreshStateAfterLaunch = autoDesktopLaunchDispatched;
         Game.FatalTerminationEvent fatalTermination =

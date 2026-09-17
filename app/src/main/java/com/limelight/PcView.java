@@ -26,6 +26,7 @@ import com.limelight.ui.AdapterFragment;
 import com.limelight.ui.AdapterFragmentCallbacks;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.HelpLauncher;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.UiHelper;
@@ -219,6 +220,7 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         // Assume we're in the foreground when created to avoid a race
         // between binding to CMS and onResume()
@@ -442,6 +444,7 @@ public class PcView extends AppCompatActivity implements AdapterFragmentCallback
     @Override
     protected void onResume() {
         super.onResume();
+        OrientationHelper.apply(this);
 
         if (recoveryRedirectInFlight && recoveryRedirectObservedPause) {
             LimeLog.info("Recovery redirect returned to PcView: sessionId=" +

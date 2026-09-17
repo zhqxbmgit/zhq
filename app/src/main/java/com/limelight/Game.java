@@ -46,6 +46,7 @@ import com.limelight.ui.StreamContainer;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.ExternalDisplayControlActivity;
 import com.limelight.utils.MouseModeOption;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.PanZoomHandler;
 import com.limelight.utils.PerformanceDataTracker;
 import com.limelight.utils.ServerHelper;
@@ -66,7 +67,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
-import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Outline;
@@ -517,6 +517,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         terminatedByUser = false;
         instance = this;
@@ -589,7 +590,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             prefConfig.showOverlayZoomToggleButton = false;
             prefConfig.enablePip = false;
             currentOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            setPreferredOrientationForActivity();
         } else {
             if (prefConfig.autoOrientation) {
                 currentOrientation = getResources().getConfiguration().orientation;
@@ -603,8 +603,6 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
             displayWidth = shouldInvertDecoderResolution ? prefConfig.height : prefConfig.width;
             displayHeight = shouldInvertDecoderResolution ? prefConfig.width : prefConfig.height;
 
-            // Keep the Activity portrait without changing stream-resolution orientation logic
-            setPreferredOrientationForActivity();
         }
 
 
@@ -1344,16 +1342,11 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
         virtualController.cycleConfigMode();
     }
 
-    private void setPreferredOrientationForActivity() {
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-    }
-
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        // Reassert the fixed Activity orientation after configuration changes
-        setPreferredOrientationForActivity();
+        OrientationHelper.apply(this);
 
         if (virtualController != null) {
             // Refresh layout of OSC for possible new screen size
@@ -1906,6 +1899,12 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
 
         // Destroy the capture provider
         inputCaptureProvider.destroy();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     @Override
@@ -4332,7 +4331,7 @@ public class Game extends AppCompatActivity implements SurfaceHolder.Callback,
     }
 
     public void rotateScreen() {
-        setPreferredOrientationForActivity();
+        OrientationHelper.apply(this);
     }
 
     /**

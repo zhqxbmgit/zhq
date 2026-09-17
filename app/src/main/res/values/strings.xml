@@ -766,4 +766,7 @@
 
     <string name="title_auto_start_desktop_stream_on_launch">Auto-start desktop stream on launch</string>
     <string name="summary_auto_start_desktop_stream_on_launch">Automatically connect to an available paired computer and start the desktop stream when the app opens</string>
+    <string name="title_app_orientation">Interface orientation</string>
+    <string name="app_orientation_portrait">Portrait</string>
+    <string name="app_orientation_landscape">Landscape</string>
 </resources>

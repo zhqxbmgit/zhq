@@ -13,6 +13,7 @@ import android.widget.ImageButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.limelight.profiles.ProfilesAdapter;
 import com.limelight.profiles.ProfilesManager;
+import com.limelight.utils.OrientationHelper;
 import com.limelight.utils.UiHelper;
 
 public class ProfilesActivity extends AppCompatActivity implements ProfilesManager.ProfileChangeListener {
@@ -23,6 +24,7 @@ public class ProfilesActivity extends AppCompatActivity implements ProfilesManag
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
         setContentView(R.layout.activity_profiles);
 
         // Setup RecyclerView
@@ -48,6 +50,12 @@ public class ProfilesActivity extends AppCompatActivity implements ProfilesManag
         updateUI();
 
         UiHelper.notifyNewRootView(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        OrientationHelper.apply(this);
     }
 
     @Override

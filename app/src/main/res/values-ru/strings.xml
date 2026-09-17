@@ -658,4 +658,7 @@
     <string name="title_checkbox_forceTightThresholds">Агрессивная вертикальная синхронизация (эксперементально)</string>
     <string name="title_checkbox_full_screen">Включить полноэкранный режим</string>
     <string name="summary_checkbox_full_screen">Скрывать системные панели в режиме погружения</string>
+    <string name="title_app_orientation">Ориентация интерфейса</string>
+    <string name="app_orientation_portrait">Портретная</string>
+    <string name="app_orientation_landscape">Альбомная</string>
 </resources>

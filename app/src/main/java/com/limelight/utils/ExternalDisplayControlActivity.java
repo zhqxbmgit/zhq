@@ -113,6 +113,7 @@ public class ExternalDisplayControlActivity extends AppCompatActivity implements
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        OrientationHelper.apply(this);
 
         instance = this;
         prefConfig = PreferenceConfiguration.readPreferences(this);
@@ -198,6 +199,7 @@ public class ExternalDisplayControlActivity extends AppCompatActivity implements
     @Override
     protected void onResume() {
         super.onResume();
+        OrientationHelper.apply(this);
         if (!isGameInstanceAvailable() && gameMenu != null) {
             finish();
         }
